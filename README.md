@@ -48,6 +48,7 @@ A unique BILL\_ID is assumed based on an incremental integer count from 0 based 
 ```
 
 BILL\_TYPE can be:
+
 0. Electricity
 1. Communications
 2. Water
