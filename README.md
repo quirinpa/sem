@@ -14,10 +14,11 @@ There are the following TYPEs:
 1. Participant stops renting a room
 2. Participant goes away temporarily
 3. Participant returns from temporary leave
-4. Bill is received
-5. Bill is paid
-6. Shared goods are bought
-7. Payment from one participant to another
+4. Add bill type
+5. Bill is received
+6. Bill is paid
+7. Shared goods are bought
+8. Payment from one participant to another
 
 All dates should be in UTC ISO-8601 format, like this: "2022-03-21T08:40:23Z". Lines in this file should be ordered by DATE.
 
@@ -42,30 +43,29 @@ A unique PARTICIPANT\_ID is assumed based on an incremental integer count from 0
 3 <DATE> <PARTICIPANT_ID>
 ```
 
+## Add bill type
+A unique BILL\_TYPE\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (4) of lines in the file.
+```
+3 <DATE> <BILL_TYPE_NAME>
+```
+
 ## Bill is received
-A unique BILL\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (4) of lines in the file.
+A unique BILL\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (5) of lines in the file.
 ```
-4 <DATE> <BILL_TYPE> <BILLING_PERIOD_START_DATE> <BILLING_PERIOD_END_DATE> <ENTITY> <REFERENCE> <AMOUNT>
+5 <DATE> <BILL_TYPE_ID> <BILLING_PERIOD_START_DATE> <BILLING_PERIOD_END_DATE> <ENTITY> <REFERENCE> <AMOUNT>
 ```
-
-BILL\_TYPE can be:
-
-0. Electricity
-1. Communications
-2. Water
-3. Gas
 
 ## Bill is paid
 ```
-5 <DATE> <BILL_ID> <PARTICIPANT_ID>
+6 <DATE> <BILL_ID> <PARTICIPANT_ID>
 ```
 
 ## Shared goods are bought
 ```
-6 <DATE> <PARTICIPANT_ID> <AMOUNT> <DESCRIPTION>
+7 <DATE> <PARTICIPANT_ID> <AMOUNT> <DESCRIPTION>
 ```
 
 ## Payment from one participant to another
 ```
-7 <DATE> <FROM_PARTICIPANT_ID> <TO_PARTICIPANT_ID> <AMOUNT>
+8 <DATE> <FROM_PARTICIPANT_ID> <TO_PARTICIPANT_ID> <AMOUNT>
 ```
