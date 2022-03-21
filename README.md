@@ -17,6 +17,7 @@ There are the following TYPEs:
 4. Bill is received
 5. Bill is paid
 6. Shared goods are bought
+7. Payment from one participant to another
 
 All dates should be in UTC ISO-8601 format, like this: "2022-03-21T08:40:23Z". Lines in this file should be ordered by DATE.
 
@@ -62,4 +63,9 @@ BILL\_TYPE can be:
 ## Shared goods are bought
 ```
 6 <DATE> <PARTICIPANT_ID> <AMOUNT> <DESCRIPTION>
+```
+
+## Payment from one participant to another
+```
+7 <DATE> <FROM_PARTICIPANT_ID> <TO_PARTICIPANT_ID> <AMOUNT>
 ```
