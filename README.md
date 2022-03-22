@@ -19,8 +19,17 @@ There are the following TYPEs:
 6. Bill is paid
 7. Shared goods are bought
 8. Payment from one participant to another
+9. Bill not payed warning received
 
-All dates should be in UTC ISO-8601 format, like this: "2022-03-21T08:40:23Z". Lines in this file should be ordered by DATE.
+Lines should always be appended at the end of the file. And preferably (not strictly necessary), they are ordered by DATE.
+
+
+All dates should be in UTC ISO-8601 format, like this: "2022-03-21T08:40:23Z".
+If they are in this format: "2022-03-21", "T00:00:00Z" is assumed.
+The current date/time can be obtained in this format via:
+```sh
+date -u +"%Y-%m-%dT%H:%M:%SZ"
+```
 
 ## Participant begins renting a room
 A unique PARTICIPANT\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (0) of lines in the file.
@@ -46,11 +55,11 @@ A unique PARTICIPANT\_ID is assumed based on an incremental integer count from 0
 ## Add bill type
 A unique BILL\_TYPE\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (4) of lines in the file.
 ```
-3 <DATE> <BILL_TYPE_NAME>
+4 <DATE> <BILL_TYPE_NAME>
 ```
 
 ## Bill is received
-A unique BILL\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (5) of lines in the file.
+A unique BILL\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (5 and 9) of lines in the file.
 ```
 5 <DATE> <BILL_TYPE_ID> <BILLING_PERIOD_START_DATE> <BILLING_PERIOD_END_DATE> <ENTITY> <REFERENCE> <AMOUNT>
 ```
@@ -68,4 +77,10 @@ A unique BILL\_ID is assumed based on an incremental integer count from 0 based 
 ## Payment from one participant to another
 ```
 8 <DATE> <FROM_PARTICIPANT_ID> <TO_PARTICIPANT_ID> <AMOUNT>
+```
+
+## Bill not payed warning received
+A unique BILL\_ID is assumed based on an incremental integer count from 0 based on the order of TYPE (5 and 9) of lines in the file.
+```
+9 <DATE> <BILL_TYPE_ID> <ENTITY> <REFERENCE> <AMOUNT>
 ```
