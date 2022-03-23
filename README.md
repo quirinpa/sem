@@ -30,6 +30,8 @@ The current date/time can be obtained in this format via:
 date -u +"%Y-%m-%dT%H:%M:%SZ"
 ```
 
+Comments start with "#". Everything after "#" is not processed.
+
 ## Participant begins renting a room
 ```
 START <DATE> <PARTICIPANT_ID> <PHONE_NUMBER> <EMAIL> <NAME>
@@ -52,7 +54,7 @@ RESUME <DATE> <PARTICIPANT_ID>
 
 ## Bill is paid
 ```
-PAY <DATE> <PARTICIPANT_ID> <ENTITY> <REFERENCE> <AMOUNT> <BILLING_PERIOD_START_DATE> <BILLING_PERIOD_END_DATE>
+PAY <DATE> <PARTICIPANT_ID> <BILL_TYPE_ID> <ENTITY> <REFERENCE> <AMOUNT> <BILLING_PERIOD_START_DATE> <BILLING_PERIOD_END_DATE>
 ```
 
 ## Shared goods are bought
