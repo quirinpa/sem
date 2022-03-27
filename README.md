@@ -24,11 +24,8 @@ Lines should always be appended at the end of the file. And preferably (not stri
 
 
 All dates should be in UTC ISO-8601 format, like this: "2022-03-21T08:40:23Z".
-If they are in this format: "2022-03-21", "T00:00:00Z" is assumed.
-The current date/time can be obtained in this format via:
-```sh
-date -u +"%Y-%m-%dT%H:%M:%SZ"
-```
+Optionally, we can have a date only, like "2022-02-01", this is assumed as "2022-01-31T24:00:00Z".
+
 
 Comments start with "#". Everything after "#" is not processed.
 
@@ -66,3 +63,21 @@ BUY <DATE> <PARTICIPANT_ID> <AMOUNT> <DESCRIPTION>
 ```
 TRANSFER <DATE> <FROM_PARTICIPANT_ID> <TO_PARTICIPANT_ID> <AMOUNT>
 ```
+
+# Pseudocode
+The desired output of the program is the amount of debt between each pair of participants.
+
+The algorithm for processing the file consists in reading the lines in the file in order, and adding information to a directed and weighted graph in which each node is a person and each edge is a representation of monetary value owned between them.
+
+A TRANSFER event adds the amount specified to the weight of the edge between the sender and the receiver of the transfer.
+
+Intervals of time in which a person is present, for example from a person's START event to a PAUSE event, are inserted into a interval tree data structure.
+
+A PAY event queries the interval tree data structure for intervals overlapping the interval that the bill refers to. Then it separates it into sections in which the number of people present is different. It calculates the price per second (S) like so: S = ANOUNT / (BILLING\_PERIOD\_END\_DATE - BILLING\_PERIOD\_START\_DATE). Then, for each sub-interval [X, Y], being N the number of people present at that interval, it calculates the price per person by doing (Y - X) * S / N.
+
+# Resources
+
+- Range overlap [krl.c](https://github.com/LineageOS/android_external_openssh/blob/lineage-18.1/krl.c)
+- Splitting range array [link](https://tousu.in/qa/?qa=3554098/)
+- Another splitting ranges [reference](https://ssw.jku.at/Research/Papers/Wimmer05/Wimmer05.pdf)
+- Multiple interval algorithms (very useful) [link](https://digitalcommons.usu.edu/cgi/viewcontent.cgi?article=8143&context=etd)
