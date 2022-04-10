@@ -22,6 +22,7 @@ const time_t mtinf = (time_t) LONG_MIN;
 const time_t tinf = (time_t) LONG_MAX;
 
 DB *gdb = NULL;
+DB *igdb = NULL;
 DB *gedb = NULL;
 static DB_ENV *dbe = NULL;
 
@@ -42,9 +43,22 @@ time_t sscantime(char *buf) {
 	return mktime(&tm);
 }
 
+static int
+map_gdb_igdb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
+	result->size = sizeof(unsigned);
+	fprintf(stderr, "map_gdb_igdb %s %u\n", (char *) key->data, *(unsigned *) data->data);
+	result->data = data->data;
+	return 0;
+}
+
 void g_init() {
 	CBUG(db_create(&gdb, dbe, 0)
 			|| gdb->open(gdb, NULL, NULL, "g", DB_HASH, DB_CREATE, 0664));
+
+	CBUG(db_create(&igdb, dbe, 0)
+			|| igdb->open(igdb, NULL, NULL, "ig", DB_HASH, DB_CREATE, 0664)
+			|| gdb->associate(gdb, NULL, igdb, map_gdb_igdb, DB_CREATE));
+
 	CBUG(db_create(&gedb, dbe, 0)
 			|| gedb->open(gedb, NULL, NULL, "ge", DB_HASH, DB_CREATE, 0664));
 }
@@ -57,7 +71,7 @@ unsigned g_insert(char *name) {
 	memset(&data, 0, sizeof(DBT));
 
 	key.data = name;
-	key.size = strlen(name);
+	key.size = strlen(name) + 1;
 	data.data = &g_len;
 	data.size = sizeof(g_len);
 
@@ -75,7 +89,7 @@ unsigned g_find(char *name) {
 	memset(&data, 0, sizeof(DBT));
 
 	key.data = name;
-	key.size = strlen(name);
+	key.size = strlen(name) + 1;
 
 	ret = gdb->get(gdb, NULL, &key, &data, 0);
 
@@ -84,6 +98,23 @@ unsigned g_find(char *name) {
  
 	CBUG(ret);
 	return * (unsigned *) data.data;
+}
+
+/* assumes strings of length 31 tops */
+void gi_get(char * buffer, unsigned id) {
+	DBT key;
+	DBT pkey;
+	DBT data;
+
+	memset(&key, 0, sizeof(DBT));
+	memset(&pkey, 0, sizeof(DBT));
+	memset(&data, 0, sizeof(DBT));
+
+	key.data = &id;
+	key.size = sizeof(id);;
+
+	CBUG(igdb->pget(igdb, NULL, &key, &pkey, &data, 0));
+	strlcpy(buffer, (char *) pkey.data, 31);
 }
 
 int ge_get(unsigned id0, unsigned id1) {
@@ -196,19 +227,19 @@ void process_transfer(time_t ts, char *line) {
 }
 
 void process_pay(time_t ts, char *line) {
-  char username[32], start_date_str[64], end_date_str[64];
+	char username[32], start_date_str[64], end_date_str[64];
 	unsigned id;
-  float fvalue;
-  int value;
-  time_t start_ts, end_ts;
+	float fvalue;
+	int value;
+	time_t start_ts, end_ts;
 
 	sscanf(line, "%s %f %s %s", username, &fvalue, start_date_str, end_date_str);
 	id = g_find(username);
-  CBUG(id == g_notfound);
+	CBUG(id == g_notfound);
 	value = (int) (fvalue * 100.0f);
-  start_ts = sscantime(start_date_str);
-  end_ts = sscantime(end_date_str);
-  fprintf(stderr, "process_pay %ld %u %d [%ld, %ld]\n", ts, id, value, start_ts, end_ts);
+	start_ts = sscantime(start_date_str);
+	end_ts = sscantime(end_date_str);
+	fprintf(stderr, "process_pay %ld %u %d [%ld, %ld]\n", ts, id, value, start_ts, end_ts);
 }
 
 void process_pause(time_t ts, char *line) {
@@ -283,6 +314,37 @@ error:
 	err(EXIT_FAILURE, "Invalid format");
 }
 
+void ge_show() {
+	DBC *cur;
+	DBT key, data;
+	int ret, dbflags = DB_FIRST;
+
+	CBUG(gedb->cursor(gedb, NULL, &cur, 0));
+
+	memset(&data, 0, sizeof(DBT));
+	memset(&key, 0, sizeof(DBT));
+
+	while (1) {
+		unsigned value;
+
+		ret = cur->get(cur, &key, &data, dbflags);
+		if (ret == DB_NOTFOUND)
+			return;
+		CBUG(ret);
+		dbflags = DB_NEXT;
+		value = * (unsigned *) data.data;
+		if (value) {
+			char from_name[32], to_name[32];
+			gi_get(from_name, * (unsigned *) key.data);
+			gi_get(to_name, ((unsigned *) key.data)[1]);
+			if (value > 0)
+				printf("%s owes %s %.2f€\n", to_name, from_name, ((float) value) / 100.0f);
+			else
+				printf("%s owes %s %.2f€\n", from_name, to_name, ((float) value) / 100.0f);
+		}
+	}
+}
+
 int main() {
 	FILE *fp = fopen("data.txt", "r");
 	char *line = NULL;
@@ -302,6 +364,8 @@ int main() {
 
 	if (ferror(fp))
 		err(EXIT_FAILURE, "getline");
+
+	ge_show();
 
 	return EXIT_SUCCESS;
 }
