@@ -52,8 +52,9 @@ time_t sscantime(char *buf) {
 	return mktime(&tm);
 }
 
+// memory leaky
 char * printtime(time_t ts) {
-	static char buf[64];
+	char *buf;
 	struct tm tm;
 
 	if (ts == mtinf)
@@ -62,12 +63,13 @@ char * printtime(time_t ts) {
 	if (ts == tinf)
 		return "inf";
 
+	buf = (char *) malloc(64);
 	tm = *localtime(&ts);
 
 	if (tm.tm_sec || tm.tm_min || tm.tm_hour)
-		strftime(buf, sizeof(buf), "%FT%T", &tm);
+		strftime(buf, 64, "%FT%T", &tm);
 	else
-		strftime(buf, sizeof(buf), "%F", &tm);
+		strftime(buf, 64, "%F", &tm);
 
 	return buf;
 }
@@ -276,39 +278,11 @@ void ti_insert(unsigned id, time_t start, time_t end) {
 
 	CBUG(tidb->put(tidb, NULL, &key, &data, 0));
 
-	char startstr[64];
-	strcpy(startstr, printtime(start));
-	debug("ti_insert %u [%s, %s]\n", id, startstr, printtime(end));
-}
-
-void tiid_show() {
-	DBC *cur;
-	DBT key;
-	DBT data;
-	int ret, dbflags = DB_NEXT;
-
-	CBUG(tiiddb->cursor(tiiddb, NULL, &cur, 0));
-
-	memset(&key, 0, sizeof(DBT));
-	memset(&data, 0, sizeof(DBT));
-
-	while (1) {
-		unsigned value;
-
-		ret = cur->get(cur, &key, &data, dbflags);
-
-		if (ret == DB_NOTFOUND)
-			return;
-
-		CBUG(ret);
-		value = * (unsigned *) key.data;
-		debug("tiid_show %u\n", value);
-	}
+	debug("ti_insert %u [%s, %s]\n", id, printtime(start), printtime(end));
 }
 
 void ti_finish_last(unsigned id, time_t end) {
 	struct ti ti;
-	/* DBT pkey; */
 	DBC *cur;
 	DBT key;
 	DBT data;
@@ -317,7 +291,6 @@ void ti_finish_last(unsigned id, time_t end) {
 	CBUG(tiiddb->cursor(tiiddb, NULL, &cur, 0));
 
 	memset(&key, 0, sizeof(DBT));
-	/* memset(&pkey, 0, sizeof(DBT)); */
 	memset(&data, 0, sizeof(DBT));
 
 	key.data = &id;
@@ -344,9 +317,7 @@ void ti_finish_last(unsigned id, time_t end) {
 	data.data = &ti;
 
 	CBUG(tidb->put(tidb, NULL, &key, &data, 0));
-	char startstr[64];
-	strcpy(startstr, printtime(ti.min));
-	debug("ti_finish_last %u [%s, %s]\n", ti.who, startstr, printtime(ti.max));
+	debug("ti_finish_last %u [%s, %s]\n", ti.who, printtime(ti.min), printtime(ti.max));
 }
 
 void process_start(time_t ts, char *line) {
@@ -401,10 +372,7 @@ void process_pay(time_t ts, char *line) {
 	start_ts = sscantime(start_date_str);
 	end_ts = sscantime(end_date_str);
 
-	char tsstr[64], startstr[64];
-	strcpy(tsstr, printtime(ts));
-	strcpy(startstr, printtime(start_ts));
-	debug("process_pay %s %u %d [%s, %s]\n", tsstr, id, value, startstr, printtime(end_ts));
+	debug("process_pay %s %u %d [%s, %s]\n", printtime(ts), id, value, printtime(start_ts), printtime(end_ts));
 }
 
 void process_pause(time_t ts, char *line) {
@@ -482,7 +450,7 @@ error:
 void ge_show() {
 	DBC *cur;
 	DBT key, data;
-	int ret, dbflags = DB_FIRST;
+	int ret;
 
 	CBUG(gedb->cursor(gedb, NULL, &cur, 0));
 
@@ -492,13 +460,12 @@ void ge_show() {
 	while (1) {
 		unsigned value;
 
-		ret = cur->get(cur, &key, &data, dbflags);
+		ret = cur->get(cur, &key, &data, DB_NEXT);
 
 		if (ret == DB_NOTFOUND)
 			return;
 
 		CBUG(ret);
-		dbflags = DB_NEXT;
 		value = * (unsigned *) data.data;
 		if (value) {
 			char from_name[32], to_name[32];
