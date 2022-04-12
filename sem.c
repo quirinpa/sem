@@ -13,10 +13,17 @@
 #endif
 
 #ifdef NDEBUG
+#define debug(...) do {} while (0)
 #define CBUG(c) if (c) abort()
 #else
+#define debug(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__)
 #define CBUG(c) if (c) { fprintf(stderr, "CBUG! " #c " %s:%s:%d\n", __FILE__, __FUNCTION__, __LINE__); raise(SIGINT); } 
 #endif
+
+struct ti {
+	time_t min, max;
+	unsigned who;
+};
 
 const time_t mtinf = (time_t) LONG_MIN;
 const time_t tinf = (time_t) LONG_MAX;
@@ -24,6 +31,8 @@ const time_t tinf = (time_t) LONG_MAX;
 DB *gdb = NULL;
 DB *igdb = NULL;
 DB *gedb = NULL;
+DB *tidb = NULL;
+DB *tiiddb = NULL;
 static DB_ENV *dbe = NULL;
 
 unsigned g_len = 0;
@@ -43,10 +52,30 @@ time_t sscantime(char *buf) {
 	return mktime(&tm);
 }
 
+char * printtime(time_t ts) {
+	static char buf[64];
+	struct tm tm;
+
+	if (ts == mtinf)
+		return "-inf";
+
+	if (ts == tinf)
+		return "inf";
+
+	tm = *localtime(&ts);
+
+	if (tm.tm_sec || tm.tm_min || tm.tm_hour)
+		strftime(buf, sizeof(buf), "%FT%T", &tm);
+	else
+		strftime(buf, sizeof(buf), "%F", &tm);
+
+	return buf;
+}
+
 static int
 map_gdb_igdb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
+	memset(result, 0, sizeof(DBT));
 	result->size = sizeof(unsigned);
-	fprintf(stderr, "map_gdb_igdb %s %u\n", (char *) key->data, *(unsigned *) data->data);
 	result->data = data->data;
 	return 0;
 }
@@ -76,7 +105,7 @@ unsigned g_insert(char *name) {
 	data.size = sizeof(g_len);
 
 	CBUG(gdb->put(gdb, NULL, &key, &data, 0));
-	fprintf(stderr, "g_insert %s id %u\n", name, g_len);
+	debug("g_insert %s id %u\n", name, g_len);
 	return g_len++;
 }
 
@@ -177,22 +206,153 @@ void ge_insert(unsigned id_from, unsigned id_to, int value) {
 	data.size = sizeof(value);
 
 	CBUG(gedb->put(gedb, NULL, &key, &data, 0));
-	fprintf(stderr, "ge_insert %u -> %u : %u\n", ids[0], ids[1], value);
+	debug("ge_insert %u -> %u : %u\n", ids[0], ids[1], value);
+}
+
+static int
+ti_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+{
+	struct ti a, b;
+	memcpy(&a, a_r->data, sizeof(struct ti));
+	memcpy(&b, b_r->data, sizeof(struct ti));
+
+	if (b.min > a.min)
+		return -1;
+
+	if (a.min > b.min)
+		return 1;
+
+	if (b.who > a.who)
+		return -1;
+
+	if (a.who > b.who)
+		return 1;
+
+	return 0;
+}
+
+static int
+map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
+	memset(result, 0, sizeof(DBT));
+	result->size = sizeof(unsigned);
+	/* result->data = &((struct ti *) key->data)->who; */
+	result->data = &((struct ti *) data->data)->who;
+	/* debug("map_tidb_tiiddb %u\n", *(unsigned *) result->data); */
+	return 0;
+}
+
+static int
+tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+{
+	unsigned	a = * (unsigned *) a_r->data,
+						b = * (unsigned *) b_r->data;
+	return b > a ? -1 : (a > b ? 1 : 0);
+}
+
+void ti_init() {
+	CBUG(db_create(&tidb, dbe, 0)
+			|| tidb->set_bt_compare(tidb, ti_cmp)
+			|| tidb->open(tidb, NULL, NULL, "ti", DB_BTREE, DB_CREATE, 0664));
+
+	CBUG(db_create(&tiiddb, dbe, 0)
+			|| tiiddb->set_bt_compare(tiiddb, tiid_cmp)
+			|| tiiddb->set_flags(tiiddb, DB_DUP)
+			|| tiiddb->open(tiiddb, NULL, NULL, "tiid", DB_BTREE, DB_CREATE, 0664)
+			|| tidb->associate(tidb, NULL, tiiddb, map_tidb_tiiddb, DB_CREATE));
 }
 
 void ti_insert(unsigned id, time_t start, time_t end) {
-	// TODO
-	fprintf(stderr, "ti_insert %u [%ld, %ld]\n", id, start, end);
+	struct ti ti = { .min = start, .max = end, .who = id };
+	DBT key;
+	DBT data;
+
+	memset(&key, 0, sizeof(DBT));
+	memset(&data, 0, sizeof(DBT));
+
+	key.data = &ti;
+	key.size = sizeof(ti);
+	data.data = &ti;
+	data.size = sizeof(ti);
+
+	CBUG(tidb->put(tidb, NULL, &key, &data, 0));
+
+	char startstr[64];
+	strcpy(startstr, printtime(start));
+	debug("ti_insert %u [%s, %s]\n", id, startstr, printtime(end));
+}
+
+void tiid_show() {
+	DBC *cur;
+	DBT key;
+	DBT data;
+	int ret, dbflags = DB_NEXT;
+
+	CBUG(tiiddb->cursor(tiiddb, NULL, &cur, 0));
+
+	memset(&key, 0, sizeof(DBT));
+	memset(&data, 0, sizeof(DBT));
+
+	while (1) {
+		unsigned value;
+
+		ret = cur->get(cur, &key, &data, dbflags);
+
+		if (ret == DB_NOTFOUND)
+			return;
+
+		CBUG(ret);
+		value = * (unsigned *) key.data;
+		debug("tiid_show %u\n", value);
+	}
 }
 
 void ti_finish_last(unsigned id, time_t end) {
-	// TODO
-	fprintf(stderr, "ti_finish_last %u %ld\n", id, end);
+	struct ti ti;
+	/* DBT pkey; */
+	DBC *cur;
+	DBT key;
+	DBT data;
+	int res, dbflags = DB_SET;
+
+	CBUG(tiiddb->cursor(tiiddb, NULL, &cur, 0));
+
+	memset(&key, 0, sizeof(DBT));
+	/* memset(&pkey, 0, sizeof(DBT)); */
+	memset(&data, 0, sizeof(DBT));
+
+	key.data = &id;
+	key.size = sizeof(id);
+
+	while (1) {
+		res = cur->c_get(cur, &key, &data, dbflags);
+
+		if (res == DB_NOTFOUND)
+			break;
+
+		CBUG(res);
+
+		if (* (unsigned *) key.data != id)
+			break;
+
+		memcpy(&ti, data.data, sizeof(ti));
+		dbflags = DB_NEXT;
+	}
+
+	CBUG(cur->c_get(cur, &key, &data, DB_PREV));
+
+	ti.max = end;
+	data.data = &ti;
+
+	CBUG(tidb->put(tidb, NULL, &key, &data, 0));
+	char startstr[64];
+	strcpy(startstr, printtime(ti.min));
+	debug("ti_finish_last %u [%s, %s]\n", ti.who, startstr, printtime(ti.max));
 }
 
 void process_start(time_t ts, char *line) {
 	char username[32];
 	unsigned id;
+
 	sscanf(line, "%s", username);
 	id = g_insert(username);
 	ti_insert(id, ts, tinf);
@@ -204,6 +364,7 @@ void process_stop(time_t ts, char *line) {
 
 	sscanf(line, "%s", username);
 	id = g_find(username);
+
 	if (id != g_notfound)
 		ti_finish_last(id, ts);
 	else {
@@ -239,7 +400,11 @@ void process_pay(time_t ts, char *line) {
 	value = (int) (fvalue * 100.0f);
 	start_ts = sscantime(start_date_str);
 	end_ts = sscantime(end_date_str);
-	fprintf(stderr, "process_pay %ld %u %d [%ld, %ld]\n", ts, id, value, start_ts, end_ts);
+
+	char tsstr[64], startstr[64];
+	strcpy(tsstr, printtime(ts));
+	strcpy(startstr, printtime(start_ts));
+	debug("process_pay %s %u %d [%s, %s]\n", tsstr, id, value, startstr, printtime(end_ts));
 }
 
 void process_pause(time_t ts, char *line) {
@@ -272,7 +437,7 @@ void process_line(char *line) {
 	if (line[0] == '#')
 		return;
 
-	fprintf(stderr, "> %s", line);
+	debug("> %s", line);
 	if (sscanf(line, "%s %s %n", op_type_str, date_str, &end) != 2)
 		goto error;
 
@@ -328,15 +493,19 @@ void ge_show() {
 		unsigned value;
 
 		ret = cur->get(cur, &key, &data, dbflags);
+
 		if (ret == DB_NOTFOUND)
 			return;
+
 		CBUG(ret);
 		dbflags = DB_NEXT;
 		value = * (unsigned *) data.data;
 		if (value) {
 			char from_name[32], to_name[32];
+
 			gi_get(from_name, * (unsigned *) key.data);
 			gi_get(to_name, ((unsigned *) key.data)[1]);
+
 			if (value > 0)
 				printf("%s owes %s %.2f€\n", to_name, from_name, ((float) value) / 100.0f);
 			else
@@ -356,6 +525,7 @@ int main() {
 		err(EXIT_FAILURE, "Unable to open file");
 
 	g_init();
+	ti_init();
 
 	while ((linelen = getline(&line, &linesize, fp)) >= 0)
 		process_line(line);
