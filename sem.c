@@ -5,12 +5,12 @@
 #include <string.h>
 #include <err.h>
 #include <signal.h>
-/* #include <sys/rbtree.h> */
 #ifdef __OpenBSD__
 #include <db4/db.h>
 #else
 #include <db.h>
 #endif
+#include <sys/queue.h>
 
 #ifdef NDEBUG
 #define debug(...) do {} while (0)
@@ -25,6 +25,30 @@ struct ti {
 	unsigned who;
 };
 
+struct ti_key {
+	time_t min;
+	unsigned who;
+};
+
+struct ti_split_i {
+  time_t ts;
+  int max;
+  unsigned who;
+};
+
+struct who_entry {
+  unsigned who;
+  SLIST_ENTRY(who_entry) entry;
+};
+
+SLIST_HEAD(who_list, who_entry);
+
+struct ti_split_f {
+  time_t min;
+  time_t max;
+  struct who_list entries;
+};
+
 const time_t mtinf = (time_t) LONG_MIN;
 const time_t tinf = (time_t) LONG_MAX;
 
@@ -32,7 +56,9 @@ DB *gdb = NULL;
 DB *igdb = NULL;
 DB *gedb = NULL;
 DB *tidb = NULL;
+DB *timaxdb = NULL;
 DB *tiiddb = NULL;
+DB *whodb = NULL; // temp
 static DB_ENV *dbe = NULL;
 
 unsigned g_len = 0;
@@ -211,35 +237,108 @@ void ge_insert(unsigned id_from, unsigned id_to, int value) {
 	debug("ge_insert %u -> %u : %u\n", ids[0], ids[1], value);
 }
 
+void who_init() {
+	CBUG(db_create(&whodb, dbe, 0)
+			|| gdb->open(whodb, NULL, NULL, "who", DB_HASH, DB_CREATE, 0664));
+}
+
+void who_drop() {
+  DBC *cur;
+  DBT key;
+  DBT data;
+  int res, dbflags = DB_FIRST;
+
+	CBUG(whodb->cursor(whodb, NULL, &cur, 0));
+
+  memset(&key, 0, sizeof(DBT));
+  memset(&data, 0, sizeof(DBT));
+
+  while (1) {
+    res = cur->c_get(cur, &key, &data, dbflags);
+
+    if (res == DB_NOTFOUND)
+      break;
+
+    CBUG(res);
+    CBUG(cur->c_del(cur, 0));
+    dbflags = DB_NEXT;
+  }
+}
+
+void who_insert(unsigned who) {
+  DBT key;
+  DBT data;
+
+  memset(&key, 0, sizeof(DBT));
+  memset(&data, 0, sizeof(DBT));
+
+  key.data = &who;
+  key.size = sizeof(who);
+  data.data = NULL;
+  data.size = 0;
+
+  CBUG(whodb->put(whodb, NULL, &key, &data, 0));
+}
+
+void who_remove(unsigned who) {
+  DBT key;
+
+  memset(&key, 0, sizeof(DBT));
+
+  key.data = &who;
+  key.size = sizeof(who);
+
+  CBUG(whodb->del(whodb, NULL, &key, 0));
+}
+
+void who_list(struct who_list *entries) {
+  DBC *cur;
+  DBT key;
+  DBT data;
+  int res, dbflags = DB_FIRST;
+
+	CBUG(whodb->cursor(whodb, NULL, &cur, 0));
+
+  memset(&key, 0, sizeof(DBT));
+  memset(&data, 0, sizeof(DBT));
+
+  while (1) {
+    res = cur->c_get(cur, &key, &data, dbflags);
+
+    if (res == DB_NOTFOUND)
+      break;
+
+    CBUG(res);
+
+    struct who_entry *entry = (struct who_entry *) malloc(sizeof(struct who_entry));
+
+    entry->who = * (unsigned *) key.data;
+    SLIST_INSERT_HEAD(entries, entry, entry);
+    dbflags = DB_NEXT;
+  }
+}
+
 static int
-ti_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
-{
-	struct ti a, b;
-	memcpy(&a, a_r->data, sizeof(struct ti));
-	memcpy(&b, b_r->data, sizeof(struct ti));
-
-	if (b.min > a.min)
-		return -1;
-
-	if (a.min > b.min)
-		return 1;
-
-	if (b.who > a.who)
-		return -1;
-
-	if (a.who > b.who)
-		return 1;
-
+map_tidb_timaxdb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
+	memset(result, 0, sizeof(DBT));
+	result->size = sizeof(time_t);
+	result->data = &((struct ti *) data->data)->max;
 	return 0;
+}
+
+static int
+timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+{
+	time_t    a = * (time_t *) a_r->data,
+						b = * (time_t *) b_r->data;
+	return b > a ? -1 : (a > b ? 1 : 0);
 }
 
 static int
 map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
 	memset(result, 0, sizeof(DBT));
 	result->size = sizeof(unsigned);
-	/* result->data = &((struct ti *) key->data)->who; */
 	result->data = &((struct ti *) data->data)->who;
-	/* debug("map_tidb_tiiddb %u\n", *(unsigned *) result->data); */
 	return 0;
 }
 
@@ -253,8 +352,13 @@ tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
 
 void ti_init() {
 	CBUG(db_create(&tidb, dbe, 0)
-			|| tidb->set_bt_compare(tidb, ti_cmp)
-			|| tidb->open(tidb, NULL, NULL, "ti", DB_BTREE, DB_CREATE, 0664));
+			|| tidb->open(tidb, NULL, NULL, "ti", DB_HASH, DB_CREATE, 0664));
+
+	CBUG(db_create(&timaxdb, dbe, 0)
+			|| timaxdb->set_bt_compare(timaxdb, tiid_cmp)
+			|| timaxdb->set_flags(timaxdb, DB_DUP)
+			|| timaxdb->open(timaxdb, NULL, NULL, "timax", DB_BTREE, DB_CREATE, 0664)
+			|| tidb->associate(tidb, NULL, timaxdb, map_tidb_timaxdb, DB_CREATE));
 
 	CBUG(db_create(&tiiddb, dbe, 0)
 			|| tiiddb->set_bt_compare(tiiddb, tiid_cmp)
@@ -265,14 +369,15 @@ void ti_init() {
 
 void ti_insert(unsigned id, time_t start, time_t end) {
 	struct ti ti = { .min = start, .max = end, .who = id };
+	struct ti_key ti_key = { .min = start, .who = id };
 	DBT key;
 	DBT data;
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
 
-	key.data = &ti;
-	key.size = sizeof(ti);
+	key.data = &ti_key;
+	key.size = sizeof(ti_key);
 	data.data = &ti;
 	data.size = sizeof(ti);
 
@@ -283,8 +388,10 @@ void ti_insert(unsigned id, time_t start, time_t end) {
 
 void ti_finish_last(unsigned id, time_t end) {
 	struct ti ti;
+  struct ti_key ti_key;
 	DBC *cur;
 	DBT key;
+	DBT pkey;
 	DBT data;
 	int res, dbflags = DB_SET;
 
@@ -311,37 +418,153 @@ void ti_finish_last(unsigned id, time_t end) {
 		dbflags = DB_NEXT;
 	}
 
-	CBUG(cur->c_get(cur, &key, &data, DB_PREV));
+	memset(&pkey, 0, sizeof(DBT));
+	CBUG(cur->c_pget(cur, &key, &pkey, &data, DB_PREV));
 
 	ti.max = end;
 	data.data = &ti;
 
-	CBUG(tidb->put(tidb, NULL, &key, &data, 0));
+	CBUG(tidb->put(tidb, NULL, &pkey, &data, 0));
 	debug("ti_finish_last %u [%s, %s]\n", ti.who, printtime(ti.min), printtime(ti.max));
 }
 
-void process_start(time_t ts, char *line) {
-	char username[32];
-	unsigned id;
+// TODO max 32 matches
+void ti_intersect(struct ti * matched, size_t *matched_l, time_t start_ts, time_t end_ts)
+{
+  struct ti tmp;
+  DBC *cur;
+  DBT key;
+  DBT data;
+  int ret, dbflags = DB_SET_RANGE;
 
-	sscanf(line, "%s", username);
-	id = g_insert(username);
-	ti_insert(id, ts, tinf);
+  *matched_l = 0;
+  CBUG(timaxdb->cursor(timaxdb, NULL, &cur, 0));
+
+  memset(&key, 0, sizeof(DBT));
+  memset(&data, 0, sizeof(DBT));
+
+  key.data = &start_ts;
+  key.size = sizeof(time_t);
+
+  // walk right until end
+  while (1) {
+    ret = cur->c_get(cur, &key, &data, dbflags);
+
+    if (ret == DB_NOTFOUND)
+      break;
+
+    CBUG(ret);
+
+    dbflags = DB_NEXT;
+    memcpy(&tmp, data.data, sizeof(struct ti));
+
+    if (tmp.max >= start_ts && tmp.min < end_ts) {
+      // its a match
+      memcpy(&matched[(*matched_l)++], &tmp, sizeof(struct ti));
+      debug("match %u [%s, %s]\n", tmp.who, printtime(tmp.min), printtime(tmp.max));
+    }
+  }
+}
+
+static int
+ti_split_i_cmp(const void *ap, const void *bp)
+{
+  struct ti_split_i a, b;
+  memcpy(&a, ap, sizeof(struct ti_split_i));
+  memcpy(&b, bp, sizeof(struct ti_split_i));
+  if (b.ts > a.ts)
+    return -1;
+  if (a.ts > b.ts)
+    return 1;
+  if (b.max > a.max)
+    return -1;
+  if (a.max > b.max)
+    return 1;
+  return 0;
+}
+
+size_t
+ti_split(struct ti_split_f *ti_split_f_arr, struct ti *matches, size_t matches_l)
+{
+  size_t ti_split_f_n;
+  int i;
+  struct ti_split_i ti_split_i_arr[matches_l * 2];
+
+  for (i = 0; i < matches_l * 2; i += 2) {
+    struct ti_split_i *ti_split_i = &ti_split_i_arr[i];
+    struct ti *match = &matches[i / 2];
+
+    ti_split_i->ts = match->min;
+    ti_split_i->max = 0;
+    ti_split_i->who = match->who;
+
+    ti_split_i++;
+    ti_split_i->ts = match->max;
+    ti_split_i->max = 1;
+    ti_split_i->who = match->who;
+  }
+
+  qsort(ti_split_i_arr, matches_l * 2, sizeof(struct ti_split_i), ti_split_i_cmp);
+
+  who_drop();
+  ti_split_f_n = 0;
+
+  for (i = 0; i < matches_l * 2 - 1; i++) {
+    struct ti_split_i *ti_split_i = &ti_split_i_arr[i];
+    struct ti_split_i *ti_split_i2 = &ti_split_i_arr[i+1];
+    time_t n, m;
+
+    if (ti_split_i->max)
+      who_remove(ti_split_i->who);
+    else
+      who_insert(ti_split_i->who);
+
+    n = ti_split_i->ts;
+    m = ti_split_i2->ts;
+
+    if (n == m)
+      continue;
+
+    struct ti_split_f *ti_split_f = &ti_split_f_arr[ti_split_f_n];
+    ti_split_f->min = n;
+    ti_split_f->max = m;
+    SLIST_INIT(&ti_split_f->entries);
+    who_list(&ti_split_f->entries);
+    ti_split_f_n++;
+
+    debug("ti_split_f [%s, %s] { ", printtime(n), printtime(m));
+
+    struct who_entry *var, *tmp;
+    SLIST_FOREACH_SAFE(var, &ti_split_f->entries, entry, tmp)
+      debug("%u ", var->who);
+    debug("}%d\n", 0);
+  }
+
+  return ti_split_f_n;
+}
+
+void process_start(time_t ts, char *line) {
+  char username[32];
+  unsigned id;
+
+  sscanf(line, "%s", username);
+  id = g_insert(username);
+  ti_insert(id, ts, tinf);
 }
 
 void process_stop(time_t ts, char *line) {
-	char username[32];
-	unsigned id;
+  char username[32];
+  unsigned id;
 
-	sscanf(line, "%s", username);
-	id = g_find(username);
+  sscanf(line, "%s", username);
+  id = g_find(username);
 
-	if (id != g_notfound)
-		ti_finish_last(id, ts);
-	else {
-		id = g_insert(username);
-		ti_insert(id, mtinf, ts);
-	}
+  if (id != g_notfound)
+    ti_finish_last(id, ts);
+  else {
+    id = g_insert(username);
+    ti_insert(id, mtinf, ts);
+  }
 }
 
 void process_transfer(time_t ts, char *line) {
@@ -358,8 +581,12 @@ void process_transfer(time_t ts, char *line) {
 	ge_insert(id_from, id_to, value);
 }
 
+// https://softwareengineering.stackexchange.com/questions/363091/split-overlapping-ranges-into-all-unique-ranges/363096#363096
 void process_pay(time_t ts, char *line) {
+  struct ti matches[32];
+  struct ti_split_f ti_split_f_arr[64];
 	char username[32], start_date_str[64], end_date_str[64];
+  size_t matches_l, ti_split_f_n = 0;
 	unsigned id;
 	float fvalue;
 	int value;
@@ -371,6 +598,23 @@ void process_pay(time_t ts, char *line) {
 	value = (int) (fvalue * 100.0f);
 	start_ts = sscantime(start_date_str);
 	end_ts = sscantime(end_date_str);
+
+  ti_intersect(matches, &matches_l, start_ts, end_ts);
+
+  // adjust min max to match query interval (needed?)
+  {
+    int i;
+    for (i = 0; i < matches_l; i++) {
+      struct ti *match = &matches[i];
+      if (match->min < start_ts)
+        match->min = start_ts;
+      if (match->max > end_ts)
+        match->max = end_ts;
+    }
+  }
+
+  debug("%lu matches\n", matches_l);
+  ti_split_f_n = ti_split(ti_split_f_arr, matches, matches_l);
 
 	debug("process_pay %s %u %d [%s, %s]\n", printtime(ts), id, value, printtime(start_ts), printtime(end_ts));
 }
@@ -493,6 +737,7 @@ int main() {
 
 	g_init();
 	ti_init();
+  who_init();
 
 	while ((linelen = getline(&line, &linesize, fp)) >= 0)
 		process_line(line);
