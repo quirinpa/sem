@@ -12,7 +12,7 @@
 #endif
 #include <sys/queue.h>
 
-#define NDEBUG
+/* #define NDEBUG */
 #ifdef NDEBUG
 #define debug(...) do {} while (0)
 #define CBUG(c) if (c) abort()
@@ -20,6 +20,8 @@
 #define debug(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__)
 #define CBUG(c) if (c) { fprintf(stderr, "CBUG! " #c " %s:%s:%d\n", __FILE__, __FUNCTION__, __LINE__); raise(SIGINT); } 
 #endif
+
+#define PAYER_TIP 1
 
 struct ti {
 	time_t min, max;
@@ -632,7 +634,7 @@ void process_pay(time_t ts, char *line) {
 		struct ti_split_f *ti_split_f = &ti_split_f_arr[i];
 		struct who_entry *var, *tmp;
 		time_t interval = ti_split_f->max - ti_split_f->min;
-		int cost = interval * value / (ti_split_f->entries_l * bill_interval);
+		int cost = PAYER_TIP + interval * value / (ti_split_f->entries_l * bill_interval);
 
 		SLIST_FOREACH_SAFE(var, &ti_split_f->entries, entry, tmp)
 			if (var->who != id)
