@@ -61,6 +61,12 @@ struct ti_split_f {
 	struct who_list entries;
 };
 
+struct tidbs {
+  DB *ti; // keys are struct ti_key, values are struct ti
+  DB *max; // secondary DB (BTREE) with interval max as primary key
+  DB *id; // secondary DB (BTREE) with ids as primary key
+} pdbs, npdbs;
+
 const time_t mtinf = (time_t) LONG_MIN; // minus infinite
 const time_t tinf = (time_t) LONG_MAX; // infinite
 
@@ -68,10 +74,6 @@ DB *gdb = NULL; // graph primary DB (keys are usernames, values are user ids)
 DB *igdb = NULL; // secondary DB to lookup usernames via ids
 
 DB *gedb = NULL; // graph edge DB to lookup debt between participants (ids as key)
-
-DB *tidb = NULL; // keys are struct ti_key, values are struct ti
-DB *timaxdb = NULL; // secondary DB (BTREE) with interval max as primary key
-DB *tiiddb = NULL; // secondary DB (BTREE) with ids as primary key
 
 DB *whodb = NULL; // temporary DB for process_pay(). see ti_split()
 
@@ -223,37 +225,44 @@ tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
 	return b > a ? -1 : (a > b ? 1 : 0);
 }
 
+static int
+tidbs_init(struct tidbs *dbs)
+{
+  return db_create(&dbs->ti, dbe, 0)
+    || dbs->ti->open(dbs->ti, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
+
+    || db_create(&dbs->max, dbe, 0)
+    || dbs->max->set_bt_compare(dbs->max, tiid_cmp)
+    || dbs->max->set_flags(dbs->max, DB_DUP)
+    || dbs->max->open(dbs->max, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
+    || dbs->ti->associate(dbs->ti, NULL, dbs->max, map_tidb_timaxdb, DB_CREATE)
+
+    || db_create(&dbs->id, dbe, 0)
+    || dbs->id->set_bt_compare(dbs->id, tiid_cmp)
+    || dbs->id->set_flags(dbs->id, DB_DUP)
+    || dbs->id->open(dbs->id, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
+    || dbs->ti->associate(dbs->ti, NULL, dbs->id, map_tidb_tiiddb, DB_CREATE);
+}
+
 static void
 dbs_init()
 {
 	CBUG(
 			db_create(&gdb, dbe, 0)
-			|| gdb->open(gdb, NULL, NULL, "g", DB_HASH, DB_CREATE, 0664)
+			|| gdb->open(gdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
 			|| db_create(&igdb, dbe, 0)
-			|| igdb->open(igdb, NULL, NULL, "ig", DB_HASH, DB_CREATE, 0664)
+			|| igdb->open(igdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 			|| gdb->associate(gdb, NULL, igdb, map_gdb_igdb, DB_CREATE)
 
 			|| db_create(&gedb, dbe, 0)
-			|| gedb->open(gedb, NULL, NULL, "ge", DB_HASH, DB_CREATE, 0664)
+			|| gedb->open(gedb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
-			|| db_create(&tidb, dbe, 0)
-			|| tidb->open(tidb, NULL, NULL, "ti", DB_HASH, DB_CREATE, 0664)
-
-			|| db_create(&timaxdb, dbe, 0)
-			|| timaxdb->set_bt_compare(timaxdb, tiid_cmp)
-			|| timaxdb->set_flags(timaxdb, DB_DUP)
-			|| timaxdb->open(timaxdb, NULL, NULL, "timax", DB_BTREE, DB_CREATE, 0664)
-			|| tidb->associate(tidb, NULL, timaxdb, map_tidb_timaxdb, DB_CREATE)
-
-			|| db_create(&tiiddb, dbe, 0)
-			|| tiiddb->set_bt_compare(tiiddb, tiid_cmp)
-			|| tiiddb->set_flags(tiiddb, DB_DUP)
-			|| tiiddb->open(tiiddb, NULL, NULL, "tiid", DB_BTREE, DB_CREATE, 0664)
-			|| tidb->associate(tidb, NULL, tiiddb, map_tidb_tiiddb, DB_CREATE)
+      || tidbs_init(&pdbs)
+      || tidbs_init(&npdbs)
 
 			|| db_create(&whodb, dbe, 0)
-			|| gdb->open(whodb, NULL, NULL, "who", DB_HASH, DB_CREATE, 0664)
+			|| gdb->open(whodb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 			);
 }
 
@@ -462,7 +471,7 @@ who_list(struct ti_split_f *ti_split_f)
 }
 
 static void
-ti_insert(unsigned id, time_t start, time_t end)
+ti_insert(struct tidbs dbs, unsigned id, time_t start, time_t end)
 {
 	struct ti ti = { .min = start, .max = end, .who = id };
 	struct ti_key ti_key = { .min = start, .who = id };
@@ -476,13 +485,13 @@ ti_insert(unsigned id, time_t start, time_t end)
 	data.data = &ti;
 	data.size = sizeof(ti);
 
-	CBUG(tidb->put(tidb, NULL, &key, &data, 0));
+	CBUG(dbs.ti->put(dbs.ti, NULL, &key, &data, 0));
 
 	debug("ti_insert %u [%s, %s]\n", id, printtime(start), printtime(end));
 }
 
 static void
-ti_finish_last(unsigned id, time_t end)
+ti_finish_last(struct tidbs dbs, unsigned id, time_t end)
 {
 	struct ti ti;
 	struct ti_key ti_key;
@@ -490,7 +499,7 @@ ti_finish_last(unsigned id, time_t end)
 	DBT key, pkey, data;
 	int res, dbflags = DB_SET;
 
-	CBUG(tiiddb->cursor(tiiddb, NULL, &cur, 0));
+	CBUG(dbs.id->cursor(dbs.id, NULL, &cur, 0));
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -519,14 +528,14 @@ ti_finish_last(unsigned id, time_t end)
 	ti.max = end;
 	data.data = &ti;
 
-	CBUG(tidb->put(tidb, NULL, &pkey, &data, 0));
+	CBUG(dbs.ti->put(dbs.ti, NULL, &pkey, &data, 0));
 	debug("ti_finish_last %u [%s, %s]\n",
 			ti.who, printtime(ti.min), printtime(ti.max));
 }
 
-// TODO max 32 matches
-static size_t
-ti_intersect(struct ti * matched, time_t start_ts, time_t end_ts)
+// TODO max 32 matches prevent buffer overflow
+static inline size_t
+ti_intersect(struct tidbs dbs, struct ti * matched, time_t start_ts, time_t end_ts)
 {
 	struct ti tmp;
 	DBC *cur;
@@ -534,7 +543,7 @@ ti_intersect(struct ti * matched, time_t start_ts, time_t end_ts)
 	size_t matched_l = 0;
 	int ret, dbflags = DB_SET_RANGE;
 
-	CBUG(timaxdb->cursor(timaxdb, NULL, &cur, 0));
+	CBUG(dbs.max->cursor(dbs.max, NULL, &cur, 0));
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -562,6 +571,12 @@ ti_intersect(struct ti * matched, time_t start_ts, time_t end_ts)
 	}
 
 	return matched_l;
+}
+
+static inline size_t
+ti_pintersect(struct tidbs dbs, struct ti * matched, time_t ts)
+{
+  return ti_intersect(dbs, matched, ts, ts);
 }
 
 static int
@@ -650,7 +665,8 @@ process_start(time_t ts, char *line)
 
 	read_word(username, line, sizeof(username));
 	id = g_insert(username);
-	ti_insert(id, ts, tinf);
+	ti_insert(pdbs, id, ts, tinf);
+	ti_insert(npdbs, id, ts, tinf);
 }
 
 static void
@@ -662,11 +678,13 @@ process_stop(time_t ts, char *line)
 	read_word(username, line, sizeof(username));
 	id = g_find(username);
 
-	if (id != g_notfound)
-		ti_finish_last(id, ts);
-	else {
+	if (id != g_notfound) {
+		ti_finish_last(pdbs, id, ts);
+		ti_finish_last(npdbs, id, ts);
+  } else {
 		id = g_insert(username);
-		ti_insert(id, mtinf, ts);
+		ti_insert(pdbs, id, mtinf, ts);
+		ti_insert(npdbs, id, mtinf, ts);
 	}
 }
 
@@ -699,7 +717,7 @@ process_pay(time_t ts, char *line)
 	line += read_ts(&start_ts, line);
 	line += read_ts(&end_ts, line);
 
-	matches_l = ti_intersect(matches, start_ts, end_ts);
+	matches_l = ti_intersect(pdbs, matches, start_ts, end_ts);
 
 	// adjust min max to match query interval (needed?)
 	{
@@ -741,7 +759,7 @@ process_pause(time_t ts, char *line)
 	read_id(&id, line);
 
 	// TODO assert interval for id at this ts
-	ti_finish_last(id, ts);
+	ti_finish_last(pdbs, id, ts);
 }
 
 static void
@@ -752,17 +770,28 @@ process_resume(time_t ts, char *line)
 	read_id(&id, line);
 
 	// TODO assert no interval for id at this ts
-	ti_insert(id, ts, tinf);
+	ti_insert(pdbs, id, ts, tinf);
 }
 
 static void
 process_buy(time_t ts, char *line)
 {
+	struct ti matches[32];
+  size_t matches_l;
 	unsigned id;
-	int value;
+	int value, i, dvalue;
 
 	line += read_id(&id, line);
 	read_currency(&value, line);
+
+  matches_l = ti_pintersect(npdbs, matches, ts);
+  dvalue = value / matches_l + PAYER_TIP;
+  debug("process_buy %d %lu %d\n", value, matches_l, dvalue);
+
+  // assert there are not multiple intervals with the same id?
+  for (i = 0; i < matches_l; i++)
+    if (matches[i].who != id)
+      ge_add(id, matches[i].who, dvalue);
 }
 
 static void
