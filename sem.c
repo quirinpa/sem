@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2022 Paulo Andre Azevedo Quirino
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -11,6 +15,7 @@
 #include <db.h>
 #endif
 #include <sys/queue.h>
+#include <ctype.h>
 
 /* #define NDEBUG */
 #ifdef NDEBUG
@@ -22,6 +27,9 @@
 #endif
 
 #define PAYER_TIP 1
+#define USERNAME_MAX_LEN 32
+#define DATE_MAX_LEN 20
+#define CURRENCY_MAX_LEN 32
 
 struct ti {
 	time_t min, max;
@@ -53,37 +61,48 @@ struct ti_split_f {
 	struct who_list entries;
 };
 
-const time_t mtinf = (time_t) LONG_MIN;
-const time_t tinf = (time_t) LONG_MAX;
+const time_t mtinf = (time_t) LONG_MIN; // minus infinite
+const time_t tinf = (time_t) LONG_MAX; // infinite
 
-DB *gdb = NULL;
-DB *igdb = NULL;
-DB *gedb = NULL;
-DB *tidb = NULL;
-DB *timaxdb = NULL;
-DB *tiiddb = NULL;
-DB *whodb = NULL; // temp
+DB *gdb = NULL; // graph primary DB (keys are usernames, values are user ids)
+DB *igdb = NULL; // secondary DB to lookup usernames via ids
+
+DB *gedb = NULL; // graph edge DB to lookup debt between participants (ids as key)
+
+DB *tidb = NULL; // keys are struct ti_key, values are struct ti
+DB *timaxdb = NULL; // secondary DB (BTREE) with interval max as primary key
+DB *tiiddb = NULL; // secondary DB (BTREE) with ids as primary key
+
+DB *whodb = NULL; // temporary DB for process_pay(). see ti_split()
+
 static DB_ENV *dbe = NULL;
 
 unsigned g_len = 0;
-unsigned *g_edges = NULL;
 unsigned g_notfound = (unsigned) -1;
 
-time_t sscantime(char *buf) {
+/* get timestamp from ISO-8601 date string */
+static time_t
+sscantime(char *buf)
+{
 	char *aux;
 	struct tm tm;
 
 	memset(&tm, 0, sizeof(tm));
 	aux = strptime(buf, "%FT%T", &tm);
-	if (!aux && !strptime(buf, "%F", &tm))
+	if (!aux && !strptime(buf, "%F", &tm)) {
+		debug("bad date '%s'\n", buf);
 		err(EXIT_FAILURE, "Invalid date");
+	}
 
 	tm.tm_isdst = -1;
 	return mktime(&tm);
 }
 
-// memory leaky
-char * printtime(time_t ts) {
+// get ISO-8601 date string from timestamp
+// only use this for debug (memory leak), or free pointer
+static char *
+printtime(time_t ts)
+{
 	char *buf;
 	struct tm tm;
 
@@ -93,40 +112,155 @@ char * printtime(time_t ts) {
 	if (ts == tinf)
 		return "inf";
 
-	buf = (char *) malloc(64);
+	buf = (char *) malloc(DATE_MAX_LEN);
 	tm = *localtime(&ts);
 
 	if (tm.tm_sec || tm.tm_min || tm.tm_hour)
-		strftime(buf, 64, "%FT%T", &tm);
+		strftime(buf, DATE_MAX_LEN, "%FT%T", &tm);
 	else
-		strftime(buf, 64, "%F", &tm);
+		strftime(buf, DATE_MAX_LEN, "%F", &tm);
 
 	return buf;
 }
 
+static size_t
+read_word(char *buf, char *input, size_t max_len)
+{
+	size_t ret = 0;
+
+	for (; *input && isspace(*input); input++, ret++);
+
+	for (;
+			*input && !isspace(*input) && ret < max_len;
+			input++, buf++, ret++)
+		*buf = *input;
+
+	CBUG(ret > max_len); // FIXME?
+	*buf = '\0';
+
+	return ret;
+}
+
+static unsigned g_find(char *name);
+
+static size_t
+read_id(unsigned *id, char *line)
+{
+	char username[USERNAME_MAX_LEN];
+	size_t ret;
+
+	ret = read_word(username, line, sizeof(username));
+	*id = g_find(username);
+	CBUG(*id == g_notfound);
+
+	return ret;
+}
+
+static size_t
+read_currency(int *target, char *line)
+{
+	char buf[CURRENCY_MAX_LEN];
+	size_t len;
+
+	len = read_word(buf, line, sizeof(buf));
+	*target = (int) (strtof(buf, NULL) * 100.0f);
+
+	return len;
+}
+
+static size_t
+read_ts(time_t *target, char *line)
+{
+	char date_str[DATE_MAX_LEN];
+	size_t ret;
+
+	ret = read_word(date_str, line, sizeof(date_str));
+	*target = sscantime(date_str);
+
+	return ret;
+}
+
 static int
-map_gdb_igdb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
+map_gdb_igdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
+{
 	memset(result, 0, sizeof(DBT));
 	result->size = sizeof(unsigned);
 	result->data = data->data;
 	return 0;
 }
 
-void g_init() {
-	CBUG(db_create(&gdb, dbe, 0)
-			|| gdb->open(gdb, NULL, NULL, "g", DB_HASH, DB_CREATE, 0664));
-
-	CBUG(db_create(&igdb, dbe, 0)
-			|| igdb->open(igdb, NULL, NULL, "ig", DB_HASH, DB_CREATE, 0664)
-			|| gdb->associate(gdb, NULL, igdb, map_gdb_igdb, DB_CREATE));
-
-	CBUG(db_create(&gedb, dbe, 0)
-			|| gedb->open(gedb, NULL, NULL, "ge", DB_HASH, DB_CREATE, 0664));
+static int
+map_tidb_timaxdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
+{
+	memset(result, 0, sizeof(DBT));
+	result->size = sizeof(time_t);
+	result->data = &((struct ti *) data->data)->max;
+	return 0;
 }
 
-unsigned g_insert(char *name) {
-	DBT key;
-	DBT data;
+static int
+timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+{
+	time_t		a = * (time_t *) a_r->data,
+						b = * (time_t *) b_r->data;
+	return b > a ? -1 : (a > b ? 1 : 0);
+}
+
+static int
+map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result)
+{
+	memset(result, 0, sizeof(DBT));
+	result->size = sizeof(unsigned);
+	result->data = &((struct ti *) data->data)->who;
+	return 0;
+}
+
+static int
+tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+{
+	unsigned	a = * (unsigned *) a_r->data,
+						b = * (unsigned *) b_r->data;
+	return b > a ? -1 : (a > b ? 1 : 0);
+}
+
+static void
+dbs_init()
+{
+	CBUG(
+			db_create(&gdb, dbe, 0)
+			|| gdb->open(gdb, NULL, NULL, "g", DB_HASH, DB_CREATE, 0664)
+
+			|| db_create(&igdb, dbe, 0)
+			|| igdb->open(igdb, NULL, NULL, "ig", DB_HASH, DB_CREATE, 0664)
+			|| gdb->associate(gdb, NULL, igdb, map_gdb_igdb, DB_CREATE)
+
+			|| db_create(&gedb, dbe, 0)
+			|| gedb->open(gedb, NULL, NULL, "ge", DB_HASH, DB_CREATE, 0664)
+
+			|| db_create(&tidb, dbe, 0)
+			|| tidb->open(tidb, NULL, NULL, "ti", DB_HASH, DB_CREATE, 0664)
+
+			|| db_create(&timaxdb, dbe, 0)
+			|| timaxdb->set_bt_compare(timaxdb, tiid_cmp)
+			|| timaxdb->set_flags(timaxdb, DB_DUP)
+			|| timaxdb->open(timaxdb, NULL, NULL, "timax", DB_BTREE, DB_CREATE, 0664)
+			|| tidb->associate(tidb, NULL, timaxdb, map_tidb_timaxdb, DB_CREATE)
+
+			|| db_create(&tiiddb, dbe, 0)
+			|| tiiddb->set_bt_compare(tiiddb, tiid_cmp)
+			|| tiiddb->set_flags(tiiddb, DB_DUP)
+			|| tiiddb->open(tiiddb, NULL, NULL, "tiid", DB_BTREE, DB_CREATE, 0664)
+			|| tidb->associate(tidb, NULL, tiiddb, map_tidb_tiiddb, DB_CREATE)
+
+			|| db_create(&whodb, dbe, 0)
+			|| gdb->open(whodb, NULL, NULL, "who", DB_HASH, DB_CREATE, 0664)
+			);
+}
+
+unsigned
+g_insert(char *name)
+{
+	DBT key, data;
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -141,9 +275,10 @@ unsigned g_insert(char *name) {
 	return g_len++;
 }
 
-unsigned g_find(char *name) {
-	DBT key;
-	DBT data;
+static unsigned
+g_find(char *name)
+{
+	DBT key, data;
 	int ret;
 
 	memset(&key, 0, sizeof(DBT));
@@ -162,10 +297,10 @@ unsigned g_find(char *name) {
 }
 
 /* assumes strings of length 31 tops */
-void gi_get(char * buffer, unsigned id) {
-	DBT key;
-	DBT pkey;
-	DBT data;
+static void
+gi_get(char * buffer, unsigned id)
+{
+	DBT key, pkey, data;
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&pkey, 0, sizeof(DBT));
@@ -178,10 +313,11 @@ void gi_get(char * buffer, unsigned id) {
 	strlcpy(buffer, (char *) pkey.data, 31);
 }
 
-int ge_get(unsigned id0, unsigned id1) {
+static int
+ge_get(unsigned id0, unsigned id1)
+{
 	unsigned ids[2];
-	DBT key;
-	DBT data;
+	DBT key, data;
 	int ret;
 
 	memset(&key, 0, sizeof(DBT));
@@ -207,10 +343,11 @@ int ge_get(unsigned id0, unsigned id1) {
 	return id0 > id1 ? -ret : ret;
 }
 
-void ge_add(unsigned id_from, unsigned id_to, int value) {
+static void
+ge_add(unsigned id_from, unsigned id_to, int value)
+{
 	unsigned ids[2];
-	DBT key;
-	DBT data;
+	DBT key, data;
 	int cvalue;
 
 	memset(&key, 0, sizeof(DBT));
@@ -231,7 +368,7 @@ void ge_add(unsigned id_from, unsigned id_to, int value) {
 
 	if (id_from > id_to) {
 		debug("ge_add %u -> %u : %d\n", ids[0], ids[1], -value);
-		value = - cvalue - value;
+		value = - cvalue - value; // FIXME?
 	} else {
 		debug("ge_add %u -> %u : %d\n", ids[0], ids[1], value);
 		value = cvalue + value;
@@ -243,16 +380,12 @@ void ge_add(unsigned id_from, unsigned id_to, int value) {
 	CBUG(gedb->put(gedb, NULL, &key, &data, 0));
 }
 
-void who_init() {
-	CBUG(db_create(&whodb, dbe, 0)
-			|| gdb->open(whodb, NULL, NULL, "who", DB_HASH, DB_CREATE, 0664));
-}
-
-void who_drop() {
+static void
+who_drop()
+{
 	DBC *cur;
-	DBT key;
-	DBT data;
-	int res, dbflags = DB_FIRST;
+	DBT key, data;
+	int res;
 
 	CBUG(whodb->cursor(whodb, NULL, &cur, 0));
 
@@ -260,20 +393,20 @@ void who_drop() {
 	memset(&data, 0, sizeof(DBT));
 
 	while (1) {
-		res = cur->c_get(cur, &key, &data, dbflags);
+		res = cur->c_get(cur, &key, &data, DB_NEXT);
 
 		if (res == DB_NOTFOUND)
 			break;
 
 		CBUG(res);
 		CBUG(cur->c_del(cur, 0));
-		dbflags = DB_NEXT;
 	}
 }
 
-void who_insert(unsigned who) {
-	DBT key;
-	DBT data;
+static void
+who_insert(unsigned who)
+{
+	DBT key, data;
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -297,11 +430,12 @@ void who_remove(unsigned who) {
 	CBUG(whodb->del(whodb, NULL, &key, 0));
 }
 
-void who_list(struct ti_split_f *ti_split_f) {
+static void
+who_list(struct ti_split_f *ti_split_f)
+{
 	DBC *cur;
-	DBT key;
-	DBT data;
-	int res, dbflags = DB_FIRST;
+	DBT key, data;
+	int res;
 
 	CBUG(whodb->cursor(whodb, NULL, &cur, 0));
 
@@ -310,76 +444,29 @@ void who_list(struct ti_split_f *ti_split_f) {
 	ti_split_f->entries_l = 0;
 
 	while (1) {
-		res = cur->c_get(cur, &key, &data, dbflags);
+		struct who_entry *entry;
+
+		res = cur->c_get(cur, &key, &data, DB_NEXT);
 
 		if (res == DB_NOTFOUND)
 			break;
 
 		CBUG(res);
 
-		struct who_entry *entry = (struct who_entry *) malloc(sizeof(struct who_entry));
+		entry = (struct who_entry *) malloc(sizeof(struct who_entry));
 
 		entry->who = * (unsigned *) key.data;
 		SLIST_INSERT_HEAD(&ti_split_f->entries, entry, entry);
 		ti_split_f->entries_l++;
-		dbflags = DB_NEXT;
 	}
 }
 
-static int
-map_tidb_timaxdb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
-	memset(result, 0, sizeof(DBT));
-	result->size = sizeof(time_t);
-	result->data = &((struct ti *) data->data)->max;
-	return 0;
-}
-
-static int
-timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+static void
+ti_insert(unsigned id, time_t start, time_t end)
 {
-	time_t		a = * (time_t *) a_r->data,
-						b = * (time_t *) b_r->data;
-	return b > a ? -1 : (a > b ? 1 : 0);
-}
-
-static int
-map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result) {
-	memset(result, 0, sizeof(DBT));
-	result->size = sizeof(unsigned);
-	result->data = &((struct ti *) data->data)->who;
-	return 0;
-}
-
-static int
-tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
-{
-	unsigned	a = * (unsigned *) a_r->data,
-						b = * (unsigned *) b_r->data;
-	return b > a ? -1 : (a > b ? 1 : 0);
-}
-
-void ti_init() {
-	CBUG(db_create(&tidb, dbe, 0)
-			|| tidb->open(tidb, NULL, NULL, "ti", DB_HASH, DB_CREATE, 0664));
-
-	CBUG(db_create(&timaxdb, dbe, 0)
-			|| timaxdb->set_bt_compare(timaxdb, tiid_cmp)
-			|| timaxdb->set_flags(timaxdb, DB_DUP)
-			|| timaxdb->open(timaxdb, NULL, NULL, "timax", DB_BTREE, DB_CREATE, 0664)
-			|| tidb->associate(tidb, NULL, timaxdb, map_tidb_timaxdb, DB_CREATE));
-
-	CBUG(db_create(&tiiddb, dbe, 0)
-			|| tiiddb->set_bt_compare(tiiddb, tiid_cmp)
-			|| tiiddb->set_flags(tiiddb, DB_DUP)
-			|| tiiddb->open(tiiddb, NULL, NULL, "tiid", DB_BTREE, DB_CREATE, 0664)
-			|| tidb->associate(tidb, NULL, tiiddb, map_tidb_tiiddb, DB_CREATE));
-}
-
-void ti_insert(unsigned id, time_t start, time_t end) {
 	struct ti ti = { .min = start, .max = end, .who = id };
 	struct ti_key ti_key = { .min = start, .who = id };
-	DBT key;
-	DBT data;
+	DBT key, data;
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -394,13 +481,13 @@ void ti_insert(unsigned id, time_t start, time_t end) {
 	debug("ti_insert %u [%s, %s]\n", id, printtime(start), printtime(end));
 }
 
-void ti_finish_last(unsigned id, time_t end) {
+static void
+ti_finish_last(unsigned id, time_t end)
+{
 	struct ti ti;
 	struct ti_key ti_key;
 	DBC *cur;
-	DBT key;
-	DBT pkey;
-	DBT data;
+	DBT key, pkey, data;
 	int res, dbflags = DB_SET;
 
 	CBUG(tiiddb->cursor(tiiddb, NULL, &cur, 0));
@@ -433,16 +520,17 @@ void ti_finish_last(unsigned id, time_t end) {
 	data.data = &ti;
 
 	CBUG(tidb->put(tidb, NULL, &pkey, &data, 0));
-	debug("ti_finish_last %u [%s, %s]\n", ti.who, printtime(ti.min), printtime(ti.max));
+	debug("ti_finish_last %u [%s, %s]\n",
+			ti.who, printtime(ti.min), printtime(ti.max));
 }
 
 // TODO max 32 matches
-size_t ti_intersect(struct ti * matched, time_t start_ts, time_t end_ts)
+static size_t
+ti_intersect(struct ti * matched, time_t start_ts, time_t end_ts)
 {
 	struct ti tmp;
 	DBC *cur;
-	DBT key;
-	DBT data;
+	DBT key, data;
 	size_t matched_l = 0;
 	int ret, dbflags = DB_SET_RANGE;
 
@@ -454,7 +542,6 @@ size_t ti_intersect(struct ti * matched, time_t start_ts, time_t end_ts)
 	key.data = &start_ts;
 	key.size = sizeof(time_t);
 
-	// walk right until end
 	while (1) {
 		ret = cur->c_get(cur, &key, &data, dbflags);
 
@@ -469,7 +556,8 @@ size_t ti_intersect(struct ti * matched, time_t start_ts, time_t end_ts)
 		if (tmp.max >= start_ts && tmp.min < end_ts) {
 			// its a match
 			memcpy(&matched[matched_l++], &tmp, sizeof(struct ti));
-			debug("match %u [%s, %s]\n", tmp.who, printtime(tmp.min), printtime(tmp.max));
+			debug("match %u [%s, %s]\n",
+					tmp.who, printtime(tmp.min), printtime(tmp.max));
 		}
 	}
 
@@ -554,20 +642,24 @@ ti_split(struct ti_split_f *ti_split_f_arr, struct ti *matches, size_t matches_l
 	return ti_split_f_n;
 }
 
-void process_start(time_t ts, char *line) {
-	char username[32];
+static void
+process_start(time_t ts, char *line)
+{
+	char username[USERNAME_MAX_LEN];
 	unsigned id;
 
-	sscanf(line, "%s", username);
+	read_word(username, line, sizeof(username));
 	id = g_insert(username);
 	ti_insert(id, ts, tinf);
 }
 
-void process_stop(time_t ts, char *line) {
-	char username[32];
+static void
+process_stop(time_t ts, char *line)
+{
+	char username[USERNAME_MAX_LEN];
 	unsigned id;
 
-	sscanf(line, "%s", username);
+	read_word(username, line, sizeof(username));
 	id = g_find(username);
 
 	if (id != g_notfound)
@@ -578,37 +670,34 @@ void process_stop(time_t ts, char *line) {
 	}
 }
 
-void process_transfer(time_t ts, char *line) {
-	char username_from[32], username_to[32];
+static void
+process_transfer(time_t ts, char *line)
+{
 	unsigned id_from, id_to;
-	float fvalue;
 	int value;
 
-	sscanf(line, "%s %s %f", username_from, username_to, &fvalue);
-	value = (int) (fvalue * 100.0f);
-	id_from = g_find(username_from);
-	id_to = g_find(username_to);
-	CBUG(id_from == g_notfound || id_to == g_notfound);
+	line += read_id(&id_from, line);
+	line += read_id(&id_to, line);
+	line += read_currency(&value, line);
+
 	ge_add(id_from, id_to, value);
 }
 
 // https://softwareengineering.stackexchange.com/questions/363091/split-overlapping-ranges-into-all-unique-ranges/363096#363096
-void process_pay(time_t ts, char *line) {
+static void
+process_pay(time_t ts, char *line)
+{
 	struct ti matches[32];
 	struct ti_split_f ti_split_f_arr[64];
-	char username[32], start_date_str[64], end_date_str[64];
 	size_t matches_l, ti_split_f_n = 0;
 	unsigned id;
-	float fvalue;
 	int value;
 	time_t start_ts, end_ts;
 
-	sscanf(line, "%s %f %s %s", username, &fvalue, start_date_str, end_date_str);
-	id = g_find(username);
-	CBUG(id == g_notfound);
-	value = (int) (fvalue * 100.0f);
-	start_ts = sscantime(start_date_str);
-	end_ts = sscantime(end_date_str);
+	line += read_id(&id, line);
+	line += read_currency(&value, line);
+	line += read_ts(&start_ts, line);
+	line += read_ts(&end_ts, line);
 
 	matches_l = ti_intersect(matches, start_ts, end_ts);
 
@@ -644,42 +733,50 @@ void process_pay(time_t ts, char *line) {
 	debug("process_pay %s %u %d [%s, %s]\n", printtime(ts), id, value, printtime(start_ts), printtime(end_ts));
 }
 
-void process_pause(time_t ts, char *line) {
-	char username[32];
+static void
+process_pause(time_t ts, char *line)
+{
 	unsigned id;
 
-	sscanf(line, "%s", username);
-	id = g_find(username);
-	CBUG(id == g_notfound);
+	read_id(&id, line);
+
 	// TODO assert interval for id at this ts
 	ti_finish_last(id, ts);
 }
 
-void process_resume(time_t ts, char *line) {
-	char username[32];
+static void
+process_resume(time_t ts, char *line)
+{
 	unsigned id;
 
-	sscanf(line, "%s", username);
-	id = g_find(username);
-	CBUG(id == g_notfound);
+	read_id(&id, line);
+
 	// TODO assert no interval for id at this ts
 	ti_insert(id, ts, tinf);
 }
 
-void process_line(char *line) {
-	char op_type_str[64], date_str[64];
+static void
+process_buy(time_t ts, char *line)
+{
+	unsigned id;
+	int value;
+
+	line += read_id(&id, line);
+	read_currency(&value, line);
+}
+
+static void
+process_line(char *line)
+{
+	char op_type_str[9], date_str[DATE_MAX_LEN];
 	time_t ts;
-	int end;
 
 	if (line[0] == '#')
 		return;
 
 	debug("> %s", line);
-	if (sscanf(line, "%s %s %n", op_type_str, date_str, &end) != 2)
-		goto error;
-
-	line += end;
-	ts = sscantime(date_str);
+	line += read_word(op_type_str, line, sizeof(op_type_str));
+	line += read_ts(&ts, line);
 
 	switch (*op_type_str) {
 	case 'S':
@@ -710,13 +807,17 @@ void process_line(char *line) {
 		}
 	case 'R':
 		return process_resume(ts, line);
+	case 'B':
+		return process_buy(ts, line);
 	}
 
 error:
 	err(EXIT_FAILURE, "Invalid format");
 }
 
-void ge_show() {
+static void
+ge_show()
+{
 	DBC *cur;
 	DBT key, data;
 	int ret;
@@ -737,7 +838,7 @@ void ge_show() {
 		CBUG(ret);
 		value = * (unsigned *) data.data;
 		if (value) {
-			char from_name[32], to_name[32];
+			char from_name[USERNAME_MAX_LEN], to_name[USERNAME_MAX_LEN];
 
 			gi_get(from_name, * (unsigned *) key.data);
 			gi_get(to_name, ((unsigned *) key.data)[1]);
@@ -750,7 +851,9 @@ void ge_show() {
 	}
 }
 
-int main() {
+int
+main()
+{
 	FILE *fp = fopen("data.txt", "r");
 	char *line = NULL;
 	ssize_t linelen;
@@ -760,9 +863,7 @@ int main() {
 	if (fp == NULL)
 		err(EXIT_FAILURE, "Unable to open file");
 
-	g_init();
-	ti_init();
-	who_init();
+	dbs_init();
 
 	while ((linelen = getline(&line, &linesize, fp)) >= 0)
 		process_line(line);

@@ -31,7 +31,7 @@ Comments start with "#". Everything after "#" is not processed.
 
 ## Participant begins renting a room
 ```
-START <DATE> <PARTICIPANT_ID> <PHONE_NUMBER> <EMAIL> <NAME>
+START <DATE> <PARTICIPANT_ID> [<PHONE_NUMBER> <EMAIL> ... <NAME>]
 ```
 
 ## Participant stops renting a room
@@ -51,12 +51,12 @@ RESUME <DATE> <PARTICIPANT_ID>
 
 ## Bill is paid
 ```
-PAY <DATE> <PARTICIPANT_ID> <AMOUNT> <BILLING_PERIOD_START_DATE> <BILLING_PERIOD_END_DATE> <BILL_TYPE_ID> <ENTITY> <REFERENCE>
+PAY <DATE> <PARTICIPANT_ID> <AMOUNT> <START_DATE> <END_DATE> [<BILL_TYPE_ID> <ENTITY> <REFERENCE> ...]
 ```
 
 ## Shared goods are bought
 ```
-BUY <DATE> <PARTICIPANT_ID> <AMOUNT> <DESCRIPTION>
+BUY <DATE> <PARTICIPANT_ID> <AMOUNT> [DESCRIPTION]
 ```
 
 ## Payment from one participant to another
