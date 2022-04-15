@@ -441,10 +441,10 @@ static inline struct who *
 who_create(unsigned who)
 {
 		struct who *entry =
-      (struct who *) malloc(sizeof(struct who));
+			(struct who *) malloc(sizeof(struct who));
 
 		entry->who = who;
-    return entry;
+		return entry;
 }
 
 static void
@@ -541,7 +541,7 @@ ti_finish_last(struct tidbs dbs, unsigned id, time_t end)
 static inline size_t
 ti_intersect(
 		struct tidbs dbs, struct ti * matches,
-    time_t min, time_t max)
+		time_t min, time_t max)
 {
 	struct ti tmp;
 	DBC *cur;
@@ -573,7 +573,7 @@ ti_intersect(
 			memcpy(&matches[matches_l++], &tmp, sizeof(struct ti));
 			debug("match %u [%s, %s]\n",
 					tmp.who, printtime(tmp.min), printtime(tmp.max));
-      CBUG(matches_l + 1 >= MATCHES_MAX);
+			CBUG(matches_l + 1 >= MATCHES_MAX);
 		}
 	}
 
@@ -582,7 +582,7 @@ ti_intersect(
 
 static inline size_t
 ti_pintersect(
-    struct tidbs dbs, struct ti * matches, time_t ts)
+		struct tidbs dbs, struct ti * matches, time_t ts)
 {
 	return ti_intersect(dbs, matches, ts, ts);
 }
@@ -633,7 +633,7 @@ split_create(time_t min, time_t max)
 		split->who_list_l = 0;
 		SLIST_INIT(&split->who_list);
 		who_list(split);
-    return split;
+		return split;
 }
 
 static inline void
@@ -659,7 +659,7 @@ splits_create(
 		if (n == m)
 			continue;
 
-    split = split_create(n, m);
+		split = split_create(n, m);
 		STAILQ_INSERT_TAIL(splits, split, entry);
 	}
 }
@@ -755,8 +755,8 @@ matches_fix(struct ti *matches, size_t matches_l, time_t min, time_t max)
 
 static inline void
 splits_pay(
-    struct split_list *splits, unsigned payer,
-    int value, time_t bill_interval)
+		struct split_list *splits, unsigned payer,
+		int value, time_t bill_interval)
 {
 	struct split *split;
 
@@ -769,6 +769,23 @@ splits_pay(
 		SLIST_FOREACH(who, &split->who_list, entry)
 			if (who->who != payer)
 				ge_add(payer, who->who, cost);
+	}
+}
+
+static void
+splits_free(struct split_list *splits)
+{
+	struct split *split, *split_tmp;
+
+	STAILQ_FOREACH_SAFE(split, splits, entry, split_tmp) {
+		struct who *who, *who_tmp;
+
+		SLIST_FOREACH_SAFE(who, &split->who_list, entry, who_tmp) {
+			SLIST_REMOVE(&split->who_list, who, who, entry);
+			free(who);
+		}
+
+		STAILQ_REMOVE(splits, split, split, entry);
 	}
 }
 
@@ -794,7 +811,8 @@ process_pay(time_t ts, char *line)
 	debug("%lu matches\n", matches_l);
 	STAILQ_INIT(&splits);
 	ti_split(&splits, matches, matches_l);
-  splits_pay(&splits, id, value, max - min);
+	splits_pay(&splits, id, value, max - min);
+	splits_free(&splits);
 	debug("process_pay %s %u %d [%s, %s]\n", printtime(ts),
 			id, value, printtime(min), printtime(max));
 }
