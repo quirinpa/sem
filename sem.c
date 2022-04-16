@@ -123,6 +123,10 @@ printtime(time_t ts)
 	return buf;
 }
 
+/*
+ * read functions
+ */
+
 static size_t
 read_word(char *buf, char *input, size_t max_len)
 {
@@ -130,9 +134,9 @@ read_word(char *buf, char *input, size_t max_len)
 
 	for (; *input && isspace(*input); input++, ret++);
 
-	for (;
-			*input && !isspace(*input) && ret < max_len;
-			input++, buf++, ret++)
+	for (; *input && !isspace(*input) && ret < max_len;
+		input++, buf++, ret++)
+
 		*buf = *input;
 
 	CBUG(ret > max_len); // FIXME?
@@ -180,6 +184,10 @@ read_ts(time_t *target, char *line)
 	return ret;
 }
 
+/*
+ * making secondary indices
+ */
+
 static int
 map_gdb_igdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
@@ -199,24 +207,28 @@ map_tidb_timaxdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 }
 
 static int
-#ifdef __APPLE__
-timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
-#else
-timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
-#endif
-{
-	time_t		a = * (time_t *) a_r->data,
-						b = * (time_t *) b_r->data;
-	return b > a ? -1 : (a > b ? 1 : 0);
-}
-
-static int
 map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
 	memset(result, 0, sizeof(DBT));
 	result->size = sizeof(unsigned);
 	result->data = &((struct ti *) data->data)->who;
 	return 0;
+}
+
+/*
+ * key ordering compare functions
+ */
+
+static int
+#ifdef __APPLE__
+timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+#else
+timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
+#endif
+{
+	time_t	a = * (time_t *) a_r->data,
+		b = * (time_t *) b_r->data;
+	return b > a ? -1 : (a > b ? 1 : 0);
 }
 
 static int
@@ -226,10 +238,14 @@ tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
 tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
 #endif
 {
-	unsigned	a = * (unsigned *) a_r->data,
-						b = * (unsigned *) b_r->data;
+	unsigned a = * (unsigned *) a_r->data,
+		 b = * (unsigned *) b_r->data;
 	return b > a ? -1 : (a > b ? 1 : 0);
 }
+
+/*
+ * Database initializers
+ */
 
 static int
 tidbs_init(struct tidbs *dbs)
@@ -238,7 +254,7 @@ tidbs_init(struct tidbs *dbs)
 		|| dbs->ti->open(dbs->ti, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
 		|| db_create(&dbs->max, dbe, 0)
-		|| dbs->max->set_bt_compare(dbs->max, tiid_cmp)
+		|| dbs->max->set_bt_compare(dbs->max, timax_cmp)
 		|| dbs->max->set_flags(dbs->max, DB_DUP)
 		|| dbs->max->open(dbs->max, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
 		|| dbs->ti->associate(dbs->ti, NULL, dbs->max, map_tidb_timaxdb, DB_CREATE)
@@ -253,24 +269,27 @@ tidbs_init(struct tidbs *dbs)
 static void
 dbs_init()
 {
-	CBUG(
-			db_create(&gdb, dbe, 0)
-			|| gdb->open(gdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
+	int ret = db_create(&gdb, dbe, 0)
+		|| gdb->open(gdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
-			|| db_create(&igdb, dbe, 0)
-			|| igdb->open(igdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
-			|| gdb->associate(gdb, NULL, igdb, map_gdb_igdb, DB_CREATE)
+		|| db_create(&igdb, dbe, 0)
+		|| igdb->open(igdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
+		|| gdb->associate(gdb, NULL, igdb, map_gdb_igdb, DB_CREATE)
 
-			|| db_create(&gedb, dbe, 0)
-			|| gedb->open(gedb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
+		|| db_create(&gedb, dbe, 0)
+		|| gedb->open(gedb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
-			|| tidbs_init(&pdbs)
-			|| tidbs_init(&npdbs)
+		|| tidbs_init(&pdbs)
+		|| tidbs_init(&npdbs)
 
-			|| db_create(&whodb, dbe, 0)
-			|| gdb->open(whodb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
-			);
+		|| db_create(&whodb, dbe, 0)
+		|| gdb->open(whodb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
+	CBUG(ret);
 }
+
+/*
+ * g (usernames to user ids) related functions
+ */
 
 unsigned
 g_insert(char *name)
@@ -311,6 +330,10 @@ g_find(char *name)
 	return * (unsigned *) data.data;
 }
 
+/*
+ * gi (ids to usernames) functions
+ */
+
 /* assumes strings of length 31 tops */
 static void
 gi_get(char * buffer, unsigned id)
@@ -327,6 +350,10 @@ gi_get(char * buffer, unsigned id)
 	CBUG(igdb->pget(igdb, NULL, &key, &pkey, &data, 0));
 	strlcpy(buffer, (char *) pkey.data, 31);
 }
+
+/*
+ * ge (graph edges) functions
+ */
 
 static int
 ge_get(unsigned id0, unsigned id1)
@@ -395,6 +422,55 @@ ge_add(unsigned id_from, unsigned id_to, int value)
 	CBUG(gedb->put(gedb, NULL, &key, &data, 0));
 }
 
+static inline void
+ge_show(unsigned from, unsigned to, int value)
+{
+	char from_name[USERNAME_MAX_LEN], to_name[USERNAME_MAX_LEN];
+
+	gi_get(from_name, from);
+	gi_get(to_name, to);
+
+	if (value > 0)
+		printf("%s owes %s %.2f€\n", to_name, from_name,
+				((float) value) / 100.0f);
+	else
+		printf("%s owes %s %.2f€\n", from_name, to_name,
+				- ((float) value) / 100.0f);
+}
+
+static void
+ge_show_all()
+{
+	DBC *cur;
+	DBT key, data;
+	int ret;
+
+	CBUG(gedb->cursor(gedb, NULL, &cur, 0));
+
+	memset(&data, 0, sizeof(DBT));
+	memset(&key, 0, sizeof(DBT));
+
+	while (1) {
+		int value;
+
+		ret = cur->get(cur, &key, &data, DB_NEXT);
+
+		if (ret == DB_NOTFOUND)
+			return;
+
+		CBUG(ret);
+		value = * (unsigned *) data.data;
+		if (value) {
+			ge_show(* (unsigned *) key.data,
+					((unsigned *) key.data)[1], value);
+		}
+	}
+}
+
+/*
+ * who (db of "current" people, for use in split calculation) related functions
+ */
+
 static void
 who_drop()
 {
@@ -434,7 +510,8 @@ who_insert(unsigned who)
 	CBUG(whodb->put(whodb, NULL, &key, &data, 0));
 }
 
-void who_remove(unsigned who) {
+static void
+who_remove(unsigned who) {
 	DBT key;
 
 	memset(&key, 0, sizeof(DBT));
@@ -448,11 +525,11 @@ void who_remove(unsigned who) {
 static inline struct who *
 who_create(unsigned who)
 {
-		struct who *entry =
-			(struct who *) malloc(sizeof(struct who));
+	struct who *entry =
+		(struct who *) malloc(sizeof(struct who));
 
-		entry->who = who;
-		return entry;
+	entry->who = who;
+	return entry;
 }
 
 static void
@@ -484,6 +561,10 @@ who_list(struct split *split)
 	}
 }
 
+/*
+ * ti (struct ti to struct ti primary db) related functions
+ */
+ 
 static void
 ti_insert(struct tidbs dbs, unsigned id, time_t start, time_t end)
 {
@@ -593,6 +674,10 @@ ti_pintersect(
 	return ti_intersect(dbs, matches, ts, ts);
 }
 
+/*
+ * matches related functions
+ */
+
 static void
 matches_debug(struct ti *matches, size_t matches_l)
 {
@@ -600,8 +685,8 @@ matches_debug(struct ti *matches, size_t matches_l)
 	int i;
 	for (i = 0; i < matches_l; i++) {
 		tmp = matches[i];
-		debug("match %u [%s, %s]\n",
-				tmp.who, printtime(tmp.min), printtime(tmp.max));
+		debug("match %u [%s, %s]\n", tmp.who,
+				printtime(tmp.min), printtime(tmp.max));
 	}
 }
 
@@ -619,6 +704,10 @@ matches_fix(struct ti *matches, size_t matches_l, time_t min, time_t max)
 			match->max = max;
 	}
 }
+
+/*
+ * isplit related functions
+ */
 
 static int
 isplit_cmp(const void *ap, const void *bp)
@@ -664,26 +753,33 @@ isplits_debug(struct isplit *isplits, size_t isplits_l) {
 	debug("isplits_debug %lu ", isplits_l);
 	for (i = 0; i < isplits_l; i++) {
 		struct isplit isplit = isplits[i];
-		debug("(%s, %d, %u) ", printtime(isplit.ts), isplit.max, isplit.who);
+		debug("(%s, %d, %u) ", printtime(isplit.ts),
+				isplit.max, isplit.who);
 	}
 	debug("\n");
 }
 
+/*
+ * split related functions
+ */
+
 static inline struct split *
 split_create(time_t min, time_t max)
 {
-		struct split *split = (struct split *) malloc(sizeof(struct split));
-		split->min = min;
-		split->max = max;
-		split->who_list_l = 0;
-		SLIST_INIT(&split->who_list);
-		who_list(split);
-		return split;
+	struct split *split = (struct split *) malloc(sizeof(struct split));
+	split->min = min;
+	split->max = max;
+	split->who_list_l = 0;
+	SLIST_INIT(&split->who_list);
+	who_list(split);
+	return split;
 }
 
 static inline void
 splits_create(
-		struct split_list *splits, struct isplit *isplits, size_t isplits_l)
+		struct split_list *splits,
+		struct isplit *isplits,
+		size_t isplits_l)
 {
 	int i;
 
@@ -718,10 +814,12 @@ splits_debug(struct split_list *splits)
 	debug("splits_debug ");
 	TAILQ_FOREACH(split, splits, entry) {
 		struct who *who, *tmp;
-		debug("(%s, %s, { ", printtime(split->min), printtime(split->max));
+		debug("(%s, %s, { ",
+				printtime(split->min), printtime(split->max));
 
 		SLIST_FOREACH_SAFE(who, &split->who_list, entry, tmp)
 			debug("%u ", who->who);
+
 		debug("}) ");
 	}
 	debug("\n");
@@ -843,7 +941,11 @@ splits_free(struct split_list *splits)
 	}
 }
 
-static void
+/*
+ * functions that process a valid type of line
+ */
+
+static inline void
 process_start(time_t ts, char *line)
 {
 	char username[USERNAME_MAX_LEN];
@@ -855,7 +957,7 @@ process_start(time_t ts, char *line)
 	ti_insert(npdbs, id, ts, tinf);
 }
 
-static void
+static inline void
 process_stop(time_t ts, char *line)
 {
 	char username[USERNAME_MAX_LEN];
@@ -874,7 +976,7 @@ process_stop(time_t ts, char *line)
 	}
 }
 
-static void
+static inline void
 process_transfer(time_t ts, char *line)
 {
 	unsigned id_from, id_to;
@@ -888,7 +990,7 @@ process_transfer(time_t ts, char *line)
 }
 
 // https://softwareengineering.stackexchange.com/questions/363091/split-overlapping-ranges-into-all-unique-ranges/363096#363096
-static void
+static inline void
 process_pay(time_t ts, char *line)
 {
 	struct ti matches[MATCHES_MAX];
@@ -912,7 +1014,7 @@ process_pay(time_t ts, char *line)
 			id, value, printtime(min), printtime(max));
 }
 
-static void
+static inline void
 process_pause(time_t ts, char *line)
 {
 	unsigned id;
@@ -922,7 +1024,7 @@ process_pause(time_t ts, char *line)
 	ti_finish_last(pdbs, id, ts);
 }
 
-static void
+static inline void
 process_resume(time_t ts, char *line)
 {
 	unsigned id;
@@ -932,7 +1034,7 @@ process_resume(time_t ts, char *line)
 	ti_insert(pdbs, id, ts, tinf);
 }
 
-static void
+static inline void
 process_buy(time_t ts, char *line)
 {
 	struct ti matches[MATCHES_MAX];
@@ -953,6 +1055,10 @@ process_buy(time_t ts, char *line)
 
 	debug("process_buy %d %lu %d\n", value, matches_l, dvalue);
 }
+
+/*
+ * etc
+ */
 
 static void
 process_line(char *line)
@@ -1004,55 +1110,13 @@ error:
 	err(EXIT_FAILURE, "Invalid format");
 }
 
-static void
-ge_show()
-{
-	DBC *cur;
-	DBT key, data;
-	int ret;
-
-	CBUG(gedb->cursor(gedb, NULL, &cur, 0));
-
-	memset(&data, 0, sizeof(DBT));
-	memset(&key, 0, sizeof(DBT));
-
-	while (1) {
-		int value;
-
-		ret = cur->get(cur, &key, &data, DB_NEXT);
-
-		if (ret == DB_NOTFOUND)
-			return;
-
-		CBUG(ret);
-		value = * (unsigned *) data.data;
-		if (value) {
-			char from_name[USERNAME_MAX_LEN], to_name[USERNAME_MAX_LEN];
-
-			gi_get(from_name, * (unsigned *) key.data);
-			gi_get(to_name, ((unsigned *) key.data)[1]);
-
-			if (value > 0)
-				printf("%s owes %s %.2f€\n",
-						to_name, from_name, ((float) value) / 100.0f);
-			else
-				printf("%s owes %s %.2f€\n",
-						from_name, to_name, - ((float) value) / 100.0f);
-		}
-	}
-}
-
 int
 main()
 {
-	/* FILE *fp = fopen("data.txt", "r"); */
 	char *line = NULL;
 	ssize_t linelen;
 	size_t linesize;
 	int ret;
-
-	/* if (fp == NULL) */
-	/* 	err(EXIT_FAILURE, "Unable to open file"); */
 
 	dbs_init();
 
@@ -1061,10 +1125,7 @@ main()
 
 	free(line);
 
-	/* if (ferror(fp)) */
-	/* 	err(EXIT_FAILURE, "getline"); */
-
-	ge_show();
+	ge_show_all();
 
 	return EXIT_SUCCESS;
 }
