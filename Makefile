@@ -7,7 +7,7 @@ sem: sem.c
 	${LINK.c} -g -o $@ sem.c
 
 run: sem
-	./sem
+	cat data.txt | ./sem
 
 clean:
 	rm sem

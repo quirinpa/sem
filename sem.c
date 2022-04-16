@@ -17,7 +17,7 @@
 #include <db.h>
 #endif
 
-/* #define NDEBUG */
+#define NDEBUG
 #ifdef NDEBUG
 #define debug(...) do {} while (0)
 #define CBUG(c) if (c) abort()
