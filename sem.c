@@ -1045,24 +1045,24 @@ ge_show()
 int
 main()
 {
-	FILE *fp = fopen("data.txt", "r");
+	/* FILE *fp = fopen("data.txt", "r"); */
 	char *line = NULL;
 	ssize_t linelen;
 	size_t linesize;
 	int ret;
 
-	if (fp == NULL)
-		err(EXIT_FAILURE, "Unable to open file");
+	/* if (fp == NULL) */
+	/* 	err(EXIT_FAILURE, "Unable to open file"); */
 
 	dbs_init();
 
-	while ((linelen = getline(&line, &linesize, fp)) >= 0)
+	while ((linelen = getline(&line, &linesize, stdin)) >= 0)
 		process_line(line);
 
 	free(line);
 
-	if (ferror(fp))
-		err(EXIT_FAILURE, "getline");
+	/* if (ferror(fp)) */
+	/* 	err(EXIT_FAILURE, "getline"); */
 
 	ge_show();
 
