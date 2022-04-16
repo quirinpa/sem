@@ -2,20 +2,20 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <sys/queue.h>
+#include <ctype.h>
+#include <err.h>
+#include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include <limits.h>
 #include <string.h>
-#include <err.h>
-#include <signal.h>
+#include <time.h>
 #ifdef __OpenBSD__
 #include <db4/db.h>
 #else
 #include <db.h>
 #endif
-#include <sys/queue.h>
-#include <ctype.h>
 
 /* #define NDEBUG */
 #ifdef NDEBUG
@@ -199,7 +199,11 @@ map_tidb_timaxdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 }
 
 static int
+#ifdef __APPLE__
 timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+#else
+timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
+#endif
 {
 	time_t		a = * (time_t *) a_r->data,
 						b = * (time_t *) b_r->data;
@@ -216,7 +220,11 @@ map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 }
 
 static int
+#ifdef __APPLE__
 tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
+#else
+tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
+#endif
 {
 	unsigned	a = * (unsigned *) a_r->data,
 						b = * (unsigned *) b_r->data;
