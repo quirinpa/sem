@@ -12,12 +12,12 @@ There are the following TYPEs:
 
 ```
 START - Participant begins renting a room
-STOP - Participant stops renting a room
 PAUSE - Participant goes away temporarily
 RESUME - Participant returns from temporary leave
-PAY - Bill is paid
-BUY - Shared goods are bought
+STOP - Participant stops renting a room
 TRANSFER - Payment from one participant to another
+BUY - Shared goods are bought
+PAY - Bill is paid
 ```
 
 Lines should always be appended at the end of the file. It is assumed that they are ordered by the first DATE expressed in the line.
@@ -31,37 +31,37 @@ Comments start with "#". It is assumed that the required items in the line are p
 
 ## Participant begins renting a room
 ```
-START <DATE> <PARTICIPANT_ID> [<PHONE_NUMBER> <EMAIL> ... <NAME>]
-```
-
-## Participant stops renting a room
-```
-STOP <DATE> <PARTICIPANT_ID>
+START <DATE> <PERSON_ID> [<PHONE_NUMBER> <EMAIL> ... <NAME>]
 ```
 
 ## Participant goes away temporarily
 ```
-PAUSE <DATE> <PARTICIPANT_ID>
+PAUSE <DATE> <PERSON_ID>
 ```
 
 ## Participant returns from temporary leave
 ```
-RESUME <DATE> <PARTICIPANT_ID>
+RESUME <DATE> <PERSON_ID>
 ```
 
-## Bill is paid
+## Participant stops renting a room
 ```
-PAY <DATE> <PARTICIPANT_ID> <AMOUNT> <START_DATE> <END_DATE> [<BILL_TYPE_ID> <ENTITY> <REFERENCE> ...]
-```
-
-## Shared goods are bought
-```
-BUY <DATE> <PARTICIPANT_ID> <AMOUNT> [DESCRIPTION]
+STOP <DATE> <PERSON_ID>
 ```
 
 ## Payment from one participant to another
 ```
-TRANSFER <DATE> <FROM_PARTICIPANT_ID> <TO_PARTICIPANT_ID> <AMOUNT>
+TRANSFER <DATE> <FROM_PERSON_ID> <TO_PERSON_ID> <AMOUNT>
+```
+
+## Shared goods are bought
+```
+BUY <DATE> <PERSON_ID> <AMOUNT> [DESCRIPTION]
+```
+
+## Bill is paid
+```
+PAY <DATE> <PERSON_ID> <AMOUNT> <START_DATE> <END_DATE> [<BILL_TYPE_ID> <ENTITY> <REFERENCE> ...]
 ```
 
 # Dependency
@@ -71,3 +71,6 @@ This program is dependant on BerkeleyDB 4.6 or similar.
 ```sh
 cat data.txt | ./sem
 ```
+# Algorithm
+I've commented the code (sem.c) very extensively in order to make it understandable to
+non-programmers. Please take a look at it.

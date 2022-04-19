@@ -1,5 +1,42 @@
 /* SPDX-FileCopyrightText: 2022 Paulo Andre Azevedo Quirino
  * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * It is important that this program can be understood by people who are not
+ * programmers, so I'm adding an in-depth description of the algorithm as
+ * comments. The most important ones will be at the top of the functions. To
+ * understand the algorithm, I recommend that you start from the bottom of this
+ * file, and scroll up as needed. It might also be useful to lookup the
+ * definition of specific functions if you want to know how they work in more
+ * detail. For that it is enough that you search for "^process_start" for
+ * example. It is also recommended that before you do that, you read the
+ * README.md to understand the format of the input data files.
+ *
+ * Mind you, dates are expressed in ISO-8601 format to users, but internally
+ * we use unix timestamps. This is to facilitate a user to analyse the input
+ * data easily while permitting the software to evaluate datetimes
+ * mathematically in a consistent way.
+ *
+ * Person ids are also particular in this way. In the input file they are
+ * textual, but internally we use numeric ids to which they correspond.
+ *
+ * Currency values are read as float but internally they are integers.
+ *
+ * The general idea of the algorithm involves a few data structures:
+ *
+ * One of them is a weighted and directed graph, in which each node represents
+ * a person, and the edges connecting the nodes represent the accumulated debt
+ * between them.
+ *
+ * Another is a binary search tree (BST) that stores intervals of time, that
+ * we query in order to find out who was present during the billing periods,
+ * etc. Actually, there are two of these kinds of BSTs. One That only stores
+ * intervals where the person is actually in the house (BST A), another that
+ * stores intervals where the person is renting a room there, but might not be
+ * present (BST B).
+ *
+ * Jump to the main function when you are ready to check out how it all works.
+ *
+ * Happy reading!
  */
 
 #include <sys/queue.h>
@@ -59,7 +96,7 @@ struct split {
 	TAILQ_ENTRY(split) entry;
 };
 
-TAILQ_HEAD(split_list, split);
+TAILQ_HEAD(split_tailq, split);
 
 struct tidbs {
 	DB *ti; // keys and values are struct ti
@@ -98,8 +135,10 @@ sscantime(char *buf)
 	return mktime(&tm);
 }
 
-// get ISO-8601 date string from timestamp
-// only use this for debug (memory leak), or free pointer
+/* get ISO-8601 date string from timestamp
+ *
+ * only use this for debug (memory leak), or free pointer
+ */
 static char *
 printtime(time_t ts)
 {
@@ -123,10 +162,11 @@ printtime(time_t ts)
 	return buf;
 }
 
-/*
+/******
  * read functions
- */
+ ******/
 
+/* read a word */
 static size_t
 read_word(char *buf, char *input, size_t max_len)
 {
@@ -147,6 +187,7 @@ read_word(char *buf, char *input, size_t max_len)
 
 static unsigned g_find(char *name);
 
+/* read person nickname and convert it to existing numeric id */
 static size_t
 read_id(unsigned *id, char *line)
 {
@@ -160,6 +201,7 @@ read_id(unsigned *id, char *line)
 	return ret;
 }
 
+/* read currency value and convert it to int */
 static size_t
 read_currency(int *target, char *line)
 {
@@ -172,6 +214,7 @@ read_currency(int *target, char *line)
 	return len;
 }
 
+/* read date in iso 8601 and convert it to a unix timestamp */
 static size_t
 read_ts(time_t *target, char *line)
 {
@@ -184,10 +227,12 @@ read_ts(time_t *target, char *line)
 	return ret;
 }
 
-/*
+/******
  * making secondary indices
- */
+ ******/
 
+/* create person id to nickname HASH keys from nickname to person id HASH data
+ */
 static int
 map_gdb_igdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
@@ -197,6 +242,7 @@ map_gdb_igdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	return 0;
 }
 
+/* create time interval BTREE keys from time interval HASH db*/
 static int
 map_tidb_timaxdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
@@ -206,6 +252,7 @@ map_tidb_timaxdb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	return 0;
 }
 
+/* create id BTREE keys from time interval HASH db */
 static int
 map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
@@ -215,10 +262,11 @@ map_tidb_tiiddb(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	return 0;
 }
 
-/*
+/******
  * key ordering compare functions
- */
+ ******/
 
+/* compare two time intervals (for sorting BST items) */
 static int
 #ifdef __APPLE__
 timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
@@ -231,6 +279,7 @@ timax_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
 	return b > a ? -1 : (a > b ? 1 : 0);
 }
 
+/* compare two person ids (for sorting BST items) */
 static int
 #ifdef __APPLE__
 tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r, size_t *locp)
@@ -243,10 +292,11 @@ tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
 	return b > a ? -1 : (a > b ? 1 : 0);
 }
 
-/*
+/******
  * Database initializers
- */
+ ******/
 
+/* initialize ti dbs */
 static int
 tidbs_init(struct tidbs *dbs)
 {
@@ -266,6 +316,7 @@ tidbs_init(struct tidbs *dbs)
 		|| dbs->ti->associate(dbs->ti, NULL, dbs->id, map_tidb_tiiddb, DB_CREATE);
 }
 
+/* Initialize all dbs */
 static void
 dbs_init()
 {
@@ -283,14 +334,15 @@ dbs_init()
 		|| tidbs_init(&npdbs)
 
 		|| db_create(&whodb, dbe, 0)
-		|| gdb->open(whodb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
+		|| gdb->open(whodb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664);
 	CBUG(ret);
 }
 
-/*
+/******
  * g (usernames to user ids) related functions
- */
+ ******/
 
+/* insert new person id (auto-generated) */
 unsigned
 g_insert(char *name)
 {
@@ -309,6 +361,7 @@ g_insert(char *name)
 	return g_len++;
 }
 
+/* find existing person id from their nickname */
 static unsigned
 g_find(char *name)
 {
@@ -330,11 +383,14 @@ g_find(char *name)
 	return * (unsigned *) data.data;
 }
 
-/*
+/******
  * gi (ids to usernames) functions
- */
+ ******/
 
-/* assumes strings of length 31 tops */
+/* get person nickname from numeric id
+ *
+ * assumes strings of length 31 tops
+ */
 static void
 gi_get(char * buffer, unsigned id)
 {
@@ -351,10 +407,11 @@ gi_get(char * buffer, unsigned id)
 	strlcpy(buffer, (char *) pkey.data, 31);
 }
 
-/*
+/******
  * ge (graph edges) functions
- */
+ ******/
 
+/* get debt between people */
 static int
 ge_get(unsigned id0, unsigned id1)
 {
@@ -385,6 +442,7 @@ ge_get(unsigned id0, unsigned id1)
 	return id0 > id1 ? -ret : ret;
 }
 
+/* add debt between people */
 static void
 ge_add(unsigned id_from, unsigned id_to, int value)
 {
@@ -422,6 +480,7 @@ ge_add(unsigned id_from, unsigned id_to, int value)
 	CBUG(gedb->put(gedb, NULL, &key, &data, 0));
 }
 
+/* show debt between a pair of two people */
 static inline void
 ge_show(unsigned from, unsigned to, int value)
 {
@@ -438,6 +497,7 @@ ge_show(unsigned from, unsigned to, int value)
 				- ((float) value) / 100.0f);
 }
 
+/* show all debt between people */
 static void
 ge_show_all()
 {
@@ -460,17 +520,17 @@ ge_show_all()
 
 		CBUG(ret);
 		value = * (unsigned *) data.data;
-		if (value) {
+		if (value)
 			ge_show(* (unsigned *) key.data,
 					((unsigned *) key.data)[1], value);
-		}
 	}
 }
 
-/*
+/******
  * who (db of "current" people, for use in split calculation) related functions
- */
+ ******/
 
+/* drop the db of present people */
 static void
 who_drop()
 {
@@ -494,6 +554,7 @@ who_drop()
 	}
 }
 
+/* put a person in the db of present people */
 static void
 who_insert(unsigned who)
 {
@@ -510,6 +571,7 @@ who_insert(unsigned who)
 	CBUG(whodb->put(whodb, NULL, &key, &data, 0));
 }
 
+/* remove a person from the db of present people */
 static void
 who_remove(unsigned who) {
 	DBT key;
@@ -522,6 +584,7 @@ who_remove(unsigned who) {
 	CBUG(whodb->del(whodb, NULL, &key, 0));
 }
 
+/* create a person that we can insert in the db of present people */
 static inline struct who *
 who_create(unsigned who)
 {
@@ -532,6 +595,7 @@ who_create(unsigned who)
 	return entry;
 }
 
+/* insert a list of present people into a split */
 static void
 who_list(struct split *split)
 {
@@ -561,10 +625,11 @@ who_list(struct split *split)
 	}
 }
 
-/*
+/******
  * ti (struct ti to struct ti primary db) related functions
- */
+ ******/
  
+/* insert a time interval into an AVL */
 static void
 ti_insert(struct tidbs dbs, unsigned id, time_t start, time_t end)
 {
@@ -584,6 +649,9 @@ ti_insert(struct tidbs dbs, unsigned id, time_t start, time_t end)
 	debug("ti_insert %u [%s, %s]\n", id, printtime(start), printtime(end));
 }
 
+/* finish the last found interval at the provided timestamp for a certain
+ * person id
+ */
 static void
 ti_finish_last(struct tidbs dbs, unsigned id, time_t end)
 {
@@ -626,7 +694,7 @@ ti_finish_last(struct tidbs dbs, unsigned id, time_t end)
 			ti.who, printtime(ti.min), printtime(ti.max));
 }
 
-// TODO max 32 matches prevent buffer overflow
+/* intersect an interval an AVL of intervals */
 static inline size_t
 ti_intersect(
 		struct tidbs dbs, struct ti * matches,
@@ -667,6 +735,7 @@ ti_intersect(
 	return matches_l;
 }
 
+/* intersect a point with an AVL of intervals */
 static inline size_t
 ti_pintersect(
 		struct tidbs dbs, struct ti * matches, time_t ts)
@@ -674,10 +743,11 @@ ti_pintersect(
 	return ti_intersect(dbs, matches, ts, ts);
 }
 
-/*
+/******
  * matches related functions
- */
+ ******/
 
+/* debugs an array of matches */
 static void
 matches_debug(struct ti *matches, size_t matches_l)
 {
@@ -690,7 +760,7 @@ matches_debug(struct ti *matches, size_t matches_l)
 	}
 }
 
-// makes all matches lie within provided interval
+/* makes all provided matches lie within the provided interval [min, max] */
 static inline void
 matches_fix(struct ti *matches, size_t matches_l, time_t min, time_t max)
 {
@@ -705,10 +775,11 @@ matches_fix(struct ti *matches, size_t matches_l, time_t min, time_t max)
 	}
 }
 
-/*
+/******
  * isplit related functions
- */
+ ******/
 
+/* compares isplits, so that we can sort them */
 static int
 isplit_cmp(const void *ap, const void *bp)
 {
@@ -727,6 +798,7 @@ isplit_cmp(const void *ap, const void *bp)
 }
 
 // assumes isplits is of size matches_l * 2
+/* creates intermediary isplits */
 static inline void
 isplits_create(struct isplit *isplits, struct ti *matches, size_t isplits_l) {
 	int i;
@@ -746,6 +818,7 @@ isplits_create(struct isplit *isplits, struct ti *matches, size_t isplits_l) {
 	}
 }
 
+/* debugs intermediary isplits */
 static void
 isplits_debug(struct isplit *isplits, size_t isplits_l) {
 	int i;
@@ -759,10 +832,12 @@ isplits_debug(struct isplit *isplits, size_t isplits_l) {
 	debug("\n");
 }
 
-/*
+/******
  * split related functions
- */
+ ******/
 
+/* Creates one split from its interval, and the list of people that are present
+ */
 static inline struct split *
 split_create(time_t min, time_t max)
 {
@@ -775,9 +850,10 @@ split_create(time_t min, time_t max)
 	return split;
 }
 
+/* Creates splits from the intermediary isplit array */
 static inline void
 splits_create(
-		struct split_list *splits,
+		struct split_tailq *splits,
 		struct isplit *isplits,
 		size_t isplits_l)
 {
@@ -806,8 +882,9 @@ splits_create(
 	}
 }
 
+/* Just something to debug a tail queue of splits */
 static inline void
-splits_debug(struct split_list *splits)
+splits_debug(struct split_tailq *splits)
 {
 	struct split *split;
 
@@ -825,9 +902,11 @@ splits_debug(struct split_list *splits)
 	debug("\n");
 }
 
+/* From a list of matched intervals, this creates the tail queue of splits
+ */
 static void
 splits_init(
-		struct split_list *splits,
+		struct split_tailq *splits,
 		struct ti *matches, size_t matches_l)
 {
 	register size_t isplits_l = matches_l * 2;
@@ -840,8 +919,11 @@ splits_init(
 	splits_create(splits, isplits, isplits_l);
 }
 
+/* Obtains a tail queue of splits from the intervals that intersect the query
+ * interval [min, max]
+ */
 static void
-splits_get(struct split_list *splits, struct tidbs dbs, time_t min, time_t max)
+splits_get(struct split_tailq *splits, struct tidbs dbs, time_t min, time_t max)
 {
 	struct ti matches[MATCHES_MAX];
 	size_t matches_l;
@@ -851,10 +933,12 @@ splits_get(struct split_list *splits, struct tidbs dbs, time_t min, time_t max)
 	splits_init(splits, matches, matches_l);
 }
 
+/* Inserts a tail queue of splits within another, before the element provided
+ */
 static inline void
 splits_concat_before(
-		struct split_list *target,
-		struct split_list *origin,
+		struct split_tailq *target,
+		struct split_tailq *origin,
 		struct split *before)
 {
 	struct split *split, *tmp;
@@ -864,11 +948,15 @@ splits_concat_before(
 	}
 }
 
+/* Fills the spaces between splits (or on empty splits) with splits from BST B,
+ * in order to resolve the situation where none of the people are present for
+ * periods of time within the billing period (the aforementined gaps).
+ */
 static inline void
-splits_fill(struct split_list *splits, time_t min, time_t max)
+splits_fill(struct split_tailq *splits, time_t min, time_t max)
 {
 	struct split *split, *tmp;
-	struct split_list more_splits;
+	struct split_tailq more_splits;
 	time_t last_max;
 
 	split = TAILQ_FIRST(splits);
@@ -880,7 +968,7 @@ splits_fill(struct split_list *splits, time_t min, time_t max)
 	last_max = min;
 
 	if (split->min > last_max) {
-		struct split_list more_splits;
+		struct split_tailq more_splits;
 		splits_get(&more_splits, npdbs, last_max, split->min);
 		splits_concat_before(splits, &more_splits, split);
 	}
@@ -889,7 +977,7 @@ splits_fill(struct split_list *splits, time_t min, time_t max)
 
 	TAILQ_FOREACH_SAFE(split, splits, entry, tmp) {
 		if (!split->who_list_l) {
-			struct split_list more_splits;
+			struct split_tailq more_splits;
 			splits_get(&more_splits, npdbs, split->min, split->max);
 			splits_concat_before(splits, &more_splits, split);
 			TAILQ_REMOVE(splits, split, entry);
@@ -899,15 +987,18 @@ splits_fill(struct split_list *splits, time_t min, time_t max)
 	}
 
 	if (max > last_max) {
-		struct split_list more_splits;
+		struct split_tailq more_splits;
 		splits_get(&more_splits, npdbs, last_max, max);
 		TAILQ_CONCAT(splits, &more_splits, entry);
 	}
 }
 
+/* adds debt for each person of the tail queue of splits to the payer of the
+ * bill
+ */
 static inline void
 splits_pay(
-		struct split_list *splits, unsigned payer,
+		struct split_tailq *splits, unsigned payer,
 		int value, time_t bill_interval)
 {
 	struct split *split;
@@ -924,8 +1015,9 @@ splits_pay(
 	}
 }
 
+/* Frees a tail queue of splits */
 static void
-splits_free(struct split_list *splits)
+splits_free(struct split_tailq *splits)
 {
 	struct split *split, *split_tmp;
 
@@ -941,60 +1033,59 @@ splits_free(struct split_list *splits)
 	}
 }
 
-/*
+/******
  * functions that process a valid type of line
- */
-
-static inline void
-process_start(time_t ts, char *line)
-{
-	char username[USERNAME_MAX_LEN];
-	unsigned id;
-
-	read_word(username, line, sizeof(username));
-	id = g_insert(username);
-	ti_insert(pdbs, id, ts, tinf);
-	ti_insert(npdbs, id, ts, tinf);
-}
-
-static inline void
-process_stop(time_t ts, char *line)
-{
-	char username[USERNAME_MAX_LEN];
-	unsigned id;
-
-	read_word(username, line, sizeof(username));
-	id = g_find(username);
-
-	if (id != g_notfound) {
-		ti_finish_last(pdbs, id, ts);
-		ti_finish_last(npdbs, id, ts);
-	} else {
-		id = g_insert(username);
-		ti_insert(pdbs, id, mtinf, ts);
-		ti_insert(npdbs, id, mtinf, ts);
-	}
-}
-
-static inline void
-process_transfer(time_t ts, char *line)
-{
-	unsigned id_from, id_to;
-	int value;
-
-	line += read_id(&id_from, line);
-	line += read_id(&id_to, line);
-	line += read_currency(&value, line);
-
-	ge_add(id_from, id_to, value);
-}
+ ******/
 
 // https://softwareengineering.stackexchange.com/questions/363091/split-overlapping-ranges-into-all-unique-ranges/363096#363096
+
+/* This function is for handling lines in the format:
+ *
+ * PAY <DATE> <PERSON_ID> <AMOUNT> <START_DATE> <END_DATE> [...]
+ *
+ * It represents the act of paying a bill. It reads the id of the payer, a
+ * monetary value, the start date and the end date for the billing period.
+ * Then it fetches the intervals of BST A which match this time period, and it
+ * "trims" them so that they lie only within it. After this, it splits the
+ * billing period into sections (or splits) where the number of people present
+ * differ. For a more visual representation of what is going on:
+ *       l
+ * o------------o - - - - - - - - - - - - -o
+ *       el
+ * o---------------------------------------o
+ *       q
+ * o---------------------------------------o
+ * 
+ * o------------o--------------------------o
+ * x            w                          y
+ *
+ * For the billing period [x, y], we get the intervals:
+ *
+ * ([x, w], l), ([x, y], el), ([x, y], q).
+ *
+ * From this we construct the following splits:
+ *
+ * ([x, w], { l, el, q }), ([w, y], { el, q })
+ *
+ * There is also the possibility that there are periods of time that no one is
+ * present, and this is also handled here. If no one is present but they are
+ * still renting a room there, we introduce splits with the intervals from
+ * BST B in the available gaps.
+ *
+ * From the obtained "splits" we then proceed to calculate how much each person
+ * has to pay. Suppose the amount of the bill is A, and we have the splits
+ * described above. For the first split, the amount per person would be:
+ * PAYER_TIP + (w - x) * A / (y - x) * 3, and for the second:
+ * PAYER_TIP + (y - w) * A / (y - x) * 2.
+ *
+ * I will spare you the gory details for now, but you can check out the
+ * functions above.
+ */
 static inline void
 process_pay(time_t ts, char *line)
 {
 	struct ti matches[MATCHES_MAX];
-	struct split_list splits;
+	struct split_tailq splits;
 	size_t matches_l;
 	unsigned id;
 	int value;
@@ -1014,26 +1105,19 @@ process_pay(time_t ts, char *line)
 			id, value, printtime(min), printtime(max));
 }
 
-static inline void
-process_pause(time_t ts, char *line)
-{
-	unsigned id;
-
-	read_id(&id, line);
-	// TODO assert interval for id at this ts
-	ti_finish_last(pdbs, id, ts);
-}
-
-static inline void
-process_resume(time_t ts, char *line)
-{
-	unsigned id;
-
-	read_id(&id, line);
-	// TODO assert no interval for id at this ts
-	ti_insert(pdbs, id, ts, tinf);
-}
-
+/* This function is for handling lines in the format:
+ *
+ * BUY <DATE> <PERSON_ID> <AMOUNT> [DESCRIPTION]
+ *
+ * It reads an existing id much like process_resume, and it also reads a
+ * currency value. Then it sees which time intervals in BST B intersect with
+ * the provided DATE. Then it divides the value by the number of matches it
+ * got, and it adds PAYER_TIP to the result, which was added to make sure the
+ * payer of the bill or of the shared goods does not lose money with rounding
+ * errors. After this, it iterates over all the matches, adding the result
+ * money owed to the read id (the payer), from the person that interval
+ * belongs to.
+ */
 static inline void
 process_buy(time_t ts, char *line)
 {
@@ -1056,10 +1140,144 @@ process_buy(time_t ts, char *line)
 	debug("process_buy %d %lu %d\n", value, matches_l, dvalue);
 }
 
-/*
- * etc
+/* This function is for handling lines in the format:
+ *
+ * TRANSFER <DATE> <FROM_PERSON_ID> <TO_PERSON_ID> <AMOUNT>
+ *
+ * It reads two existing PERSON_IDs and obtains their numeric ids, which are
+ * assumed to exist. It also reads a currency value. Then it adds the value to
+ * the edge between the first id and the second id, increasing the debt that
+ * the second person owes to the first one by that value.
  */
+static inline void
+process_transfer(time_t ts, char *line)
+{
+	unsigned id_from, id_to;
+	int value;
 
+	line += read_id(&id_from, line);
+	line += read_id(&id_to, line);
+	line += read_currency(&value, line);
+
+	ge_add(id_from, id_to, value);
+}
+
+/* This function is for handling lines in the format:
+ *
+ * STOP <DATE> <PERSON_ID>
+ *
+ * It reads a PERSON_ID, and it checks if there is a correspondant graph node
+ * (and so a numeric id). If there is one, it finishes the last intervals in
+ * both BSTs (much like process_pause does for BST A). If there isn't a graph
+ * node for that user (and therefore no numeric id), it generates one. Then it
+ * inserts the time interval [-∞, DATE] (and the newly created id) into both
+ * BSTs.
+ */
+static inline void
+process_stop(time_t ts, char *line)
+{
+	char username[USERNAME_MAX_LEN];
+	unsigned id;
+
+	read_word(username, line, sizeof(username));
+	id = g_find(username);
+
+	if (id != g_notfound) {
+		ti_finish_last(pdbs, id, ts);
+		ti_finish_last(npdbs, id, ts);
+	} else {
+		id = g_insert(username);
+		ti_insert(pdbs, id, mtinf, ts);
+		ti_insert(npdbs, id, mtinf, ts);
+	}
+}
+
+/* This function is for handling lines in the format:
+ *
+ * RESUME <DATE> <PERSON_ID>
+ *
+ * So it reads an existing PERSON_ID and obtains the correspondant numeric id,
+ * then it inserts the interval [DATE, +∞] (and the id) into BST A. It differs
+ * from process_start in the sense that it assumes that the numeric id is
+ * already present, and also because it never inserts the interval into BST B.
+ */
+static inline void
+process_resume(time_t ts, char *line)
+{
+	unsigned id;
+
+	read_id(&id, line);
+	// TODO assert no interval for id at this ts
+	ti_insert(pdbs, id, ts, tinf);
+}
+
+/* This function is for handling lines in the format:
+ *
+ * PAUSE <DATE> <PERSON_ID>
+ *
+ * As such, it reads an existing PERSON_ID, and fetches the numeric id to which
+ * it corresponds. After that, it grabs the last time interval that is present
+ * that belongs to that person, and finishes it at the read DATE
+ * (only in BST A).
+ *
+ * For example, if the preceding line was:
+ *
+ * START <DATE_A> joseph
+ *
+ * And therefore, the most recent interval for joseph was [DATE_A, +∞], a line
+ * like:
+ *
+ * PAUSE <DATE_B> joseph
+ *
+ * Would update this interval to [DATE_A, DATE_B], but only for BST A.
+ */
+static inline void
+process_pause(time_t ts, char *line)
+{
+	unsigned id;
+
+	read_id(&id, line);
+	// TODO assert interval for id at this ts
+	ti_finish_last(pdbs, id, ts);
+}
+
+/* This function is for handling lines in the format:
+ *
+ * START <DATE> <PERSON_ID> [<PHONE_NUMBER> <EMAIL> ... <NAME>]
+ *
+ * So it reads a textual person id, then it inserts it into the graph as a
+ * node, generating a numeric id. Then it inserts the time interval [DATE, +∞]
+ * along with that numeric id into both BST A and BST B.
+ */
+static inline void
+process_start(time_t ts, char *line)
+{
+	char username[USERNAME_MAX_LEN];
+	unsigned id;
+
+	read_word(username, line, sizeof(username));
+	id = g_insert(username);
+	ti_insert(pdbs, id, ts, tinf);
+	ti_insert(npdbs, id, ts, tinf);
+}
+
+/******
+ * etc
+ ******/
+
+/* This function is what processes each line. For each of them, it first checks
+ * if it starts with a "#", in other words, if it is totally commented out.
+ * If it is, it ignores this line. If it isn't, it then proceeds to read a
+ * word: the TYPE of operation or event that the line represents. It also reads
+ * the DATE. After this, it checks what the TYPE of operation is. Depending on
+ * that, it does different things. In all valid cases (and for every different
+ * TYPE), it calls a function named process_<TYPE> (lowercase), all of these
+ * functions receive the DATE that was read, and also a pointer to the part of
+ * the line that wasn't read yet.
+ *
+ * Check out the functions in the section above to understand how these work
+ * internally.
+ */
 static void
 process_line(char *line)
 {
@@ -1110,6 +1328,21 @@ error:
 	err(EXIT_FAILURE, "Invalid format");
 }
 
+/* The main function is the entry point to the application. In this case, it
+ * is very basic. What it does is it reads each line that was fed in standard
+ * input. This allows you to feed it any file you want by running:
+ *
+ * $ cat file.txt | ./sem
+ *
+ * You can also just run "./sem", input manually, and then hit ctrl+D.
+ *
+ * For each line read, it then calls process_line, with that line as an
+ * argument (a pointer). Look at process_line right above this comment to
+ * understand how it works.
+ *
+ * After reading each line in standard input, the program shows the debt
+ * that was calculated, that is owed between the people (ge_show_all).
+ */
 int
 main()
 {
