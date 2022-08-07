@@ -681,13 +681,23 @@ ti_finish_last(struct tidbs dbs, unsigned id, time_t end)
 
 		memcpy(&ti, data.data, sizeof(ti));
 		dbflags = DB_NEXT;
+
+		if (ti.max == tinf) {
+			memset(&pkey, 0, sizeof(DBT));
+			goto found;
+		}
 	}
 
 	memset(&pkey, 0, sizeof(DBT));
 	CBUG(cur->c_pget(cur, &key, &pkey, &data, DB_PREV));
 
+found:
+	CBUG(cur->del(cur, 0));
+
+	ti.who = id;
 	ti.max = end;
 	data.data = &ti;
+	pkey.data = &ti;
 
 	CBUG(dbs.ti->put(dbs.ti, NULL, &pkey, &data, 0));
 	debug("ti_finish_last %u [%s, %s]\n",
@@ -915,7 +925,7 @@ splits_init(
 	TAILQ_INIT(splits);
 	isplits_create(isplits, matches, isplits_l);
 	qsort(isplits, isplits_l, sizeof(struct isplit), isplit_cmp);
-	/* isplits_debug(isplits, isplits_l); */
+	isplits_debug(isplits, isplits_l);
 	splits_create(splits, isplits, isplits_l);
 }
 
@@ -929,6 +939,7 @@ splits_get(struct split_tailq *splits, struct tidbs dbs, time_t min, time_t max)
 	size_t matches_l;
 
 	matches_l = ti_intersect(dbs, matches, min, max);
+	/* matches_debug(matches, matches_l); */
 	matches_fix(matches, matches_l, min, max);
 	splits_init(splits, matches, matches_l);
 }
