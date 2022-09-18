@@ -698,13 +698,14 @@ found:
 	ti.max = end;
 	data.data = &ti;
 	pkey.data = &ti;
+	data.size = pkey.size = sizeof(struct ti);
 
 	CBUG(dbs.ti->put(dbs.ti, NULL, &pkey, &data, 0));
 	debug("ti_finish_last %u [%s, %s]\n",
 			ti.who, printtime(ti.min), printtime(ti.max));
 }
 
-/* intersect an interval an AVL of intervals */
+/* intersect an interval with an AVL of intervals */
 static inline size_t
 ti_intersect(
 		struct tidbs dbs, struct ti * matches,
