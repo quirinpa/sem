@@ -60,7 +60,6 @@
 #include <db.h>
 #endif
 #include <bsd/sys/queue.h>
-/* #define PEOPLE_MAX 1024 */
 #endif
 #include <time.h>
 
@@ -114,11 +113,7 @@ struct who_list who;
 struct tidbs {
 	DB *ti; // keys and values are struct ti
 	DB *max; // secondary DB (BTREE) with interval max as key
-#ifdef PEOPLE_MAX
-	time_t last_min[PEOPLE_MAX];
-#else
 	DB *id; // secondary DB (BTREE) with ids as primary key
-#endif
 } pdbs, npdbs;
 
 const time_t mtinf = (time_t) LONG_MIN; // minus infinite
@@ -410,9 +405,6 @@ tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
 static int
 tidbs_init(struct tidbs *dbs)
 {
-#ifdef PEOPLE_MAX
-	memset(dbs->last_min, 0, sizeof(dbs->last_min));
-#endif
 	return db_create(&dbs->ti, dbe, 0)
 		|| dbs->ti->open(dbs->ti, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
@@ -422,15 +414,11 @@ tidbs_init(struct tidbs *dbs)
 		|| dbs->max->open(dbs->max, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
 		|| dbs->ti->associate(dbs->ti, NULL, dbs->max, map_tidb_timaxdb, DB_CREATE | DB_IMMUTABLE_KEY)
 
-#ifndef PEOPLE_MAX
 		|| db_create(&dbs->id, dbe, 0)
 		|| dbs->id->set_bt_compare(dbs->id, tiid_cmp)
 		|| dbs->id->set_flags(dbs->id, DB_DUP)
 		|| dbs->id->open(dbs->id, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
 		|| dbs->ti->associate(dbs->ti, NULL, dbs->id, map_tidb_tiiddb, DB_CREATE | DB_IMMUTABLE_KEY);
-#else
-	;
-#endif
 }
 
 /* Initialize all dbs */
@@ -740,27 +728,15 @@ ti_finish_last(struct tidbs *dbs, unsigned id, time_t end)
 {
 	struct ti ti;
 	DBT key, data;
-#ifndef PEOPLE_MAX
 	DBT pkey;
 	DBC *cur;
 	int res, dbflags = DB_SET;
 
 	CBUG(dbs->id->cursor(dbs->id, NULL, &cur, 0));
-#endif
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
 
-#ifdef PEOPLE_MAX
-	ti.min = dbs->last_min[id];
-	ti.max = tinf;
-	ti.who = id;
-
-	key.data = &ti;
-	key.size = sizeof(ti);
-
-	CBUG(dbs->ti->del(dbs->ti, NULL, &key, 0));
-#else
 	key.data = &id;
 	key.size = sizeof(id);
 
@@ -783,7 +759,6 @@ ti_finish_last(struct tidbs *dbs, unsigned id, time_t end)
 	key.data = data.data = &ti;
 	key.size = data.size = sizeof(ti);
 	/* ti.who = id; */
-#endif
 	ti.max = end;
 	data.data = &ti;
 	data.size = sizeof(ti);
@@ -1338,9 +1313,6 @@ process_resume(time_t ts, char *line)
 	line_finish(line);
 	// TODO assert no interval for id at this ts
 	ti_insert(&pdbs, id, ts, tinf);
-#ifdef PEOPLE_MAX
-	pdbs.last_min[id] = ts;
-#endif
 }
 
 /* This function is for handling lines in the format:
@@ -1399,10 +1371,6 @@ process_start(time_t ts, char *line)
 	line_finish(line);
 	ti_insert(&pdbs, id, ts, tinf);
 	ti_insert(&npdbs, id, ts, tinf);
-#ifdef PEOPLE_MAX
-	pdbs.last_min[id] = ts;
-	npdbs.last_min[id] = ts;
-#endif
 }
 
 /******
