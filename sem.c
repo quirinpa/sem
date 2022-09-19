@@ -39,7 +39,7 @@
  * Happy reading!
  */
 
-#include <sys/queue.h>
+#define _BSD_SOURCE
 #include <ctype.h>
 #include <err.h>
 #include <limits.h>
@@ -47,12 +47,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #ifdef __OpenBSD__
+#include <db4/db.h>
+#include <sys/queue.h>
+#else
+#ifdef ALPINE
+#include <stdint.h>
 #include <db4/db.h>
 #else
 #include <db.h>
 #endif
+#include <bsd/sys/queue.h>
+#endif
+#include <time.h>
 
 /* #define NDEBUG */
 #ifdef NDEBUG
@@ -70,6 +77,7 @@
 #define DATE_MAX_LEN 20
 #define CURRENCY_MAX_LEN 32
 #define MATCHES_MAX 32
+/* #define PEOPLE_MAX 1024 */
 
 struct ti {
 	time_t min, max;
@@ -103,8 +111,12 @@ struct who_list who;
 
 struct tidbs {
 	DB *ti; // keys and values are struct ti
-	DB *max; // secondary DB (BTREE) with interval max as primary key
+	DB *max; // secondary DB (BTREE) with interval max as key
+#ifdef PEOPLE_MAX
+	time_t last_min[PEOPLE_MAX];
+#else
 	DB *id; // secondary DB (BTREE) with ids as primary key
+#endif
 } pdbs, npdbs;
 
 const time_t mtinf = (time_t) LONG_MIN; // minus infinite
@@ -164,6 +176,7 @@ who_list(DB *whodb, struct who_list *who)
 		len++;
 	}
 
+	CBUG(cur->close(cur));
 	return len;
 }
 
@@ -222,8 +235,8 @@ sscantime(char *buf)
 	struct tm tm;
 
 	memset(&tm, 0, sizeof(tm));
-	aux = strptime(buf, "%FT%T", &tm);
-	if (!aux && !strptime(buf, "%F", &tm))
+	aux = strptime(buf, "%Y-%m-%dTT%H:%M:%S", &tm);
+	if (!aux && !strptime(buf, "%Y-%m-%d", &tm))
 		err(EXIT_FAILURE, "Invalid date");
 
 	tm.tm_isdst = -1;
@@ -395,6 +408,9 @@ tiid_cmp(DB *sec, const DBT *a_r, const DBT *b_r)
 static int
 tidbs_init(struct tidbs *dbs)
 {
+#ifdef PEOPLE_MAX
+	memset(dbs->last_min, 0, sizeof(dbs->last_min));
+#endif
 	return db_create(&dbs->ti, dbe, 0)
 		|| dbs->ti->open(dbs->ti, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
@@ -402,13 +418,17 @@ tidbs_init(struct tidbs *dbs)
 		|| dbs->max->set_bt_compare(dbs->max, timax_cmp)
 		|| dbs->max->set_flags(dbs->max, DB_DUP)
 		|| dbs->max->open(dbs->max, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
-		|| dbs->ti->associate(dbs->ti, NULL, dbs->max, map_tidb_timaxdb, DB_CREATE)
+		|| dbs->ti->associate(dbs->ti, NULL, dbs->max, map_tidb_timaxdb, DB_CREATE | DB_IMMUTABLE_KEY)
 
+#ifndef PEOPLE_MAX
 		|| db_create(&dbs->id, dbe, 0)
 		|| dbs->id->set_bt_compare(dbs->id, tiid_cmp)
 		|| dbs->id->set_flags(dbs->id, DB_DUP)
 		|| dbs->id->open(dbs->id, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
-		|| dbs->ti->associate(dbs->ti, NULL, dbs->id, map_tidb_tiiddb, DB_CREATE);
+		|| dbs->ti->associate(dbs->ti, NULL, dbs->id, map_tidb_tiiddb, DB_CREATE | DB_IMMUTABLE_KEY);
+#else
+	;
+#endif
 }
 
 /* Initialize all dbs */
@@ -622,6 +642,8 @@ ge_show_all()
 			ge_show(* (unsigned *) key.data,
 					((unsigned *) key.data)[1], value);
 	}
+
+	CBUG(cur->close(cur));
 }
 
 /******
@@ -650,6 +672,8 @@ who_drop(DB *whodb)
 		CBUG(res);
 		CBUG(cur->c_del(cur, 0));
 	}
+
+	CBUG(cur->close(cur));
 }
 
 /* put a person in the db of present people */
@@ -688,7 +712,7 @@ who_remove(DB *whodb, unsigned who) {
  
 /* insert a time interval into an AVL */
 static void
-ti_insert(struct tidbs dbs, unsigned id, time_t start, time_t end)
+ti_insert(struct tidbs *dbs, unsigned id, time_t start, time_t end)
 {
 	struct ti ti = { .min = start, .max = end, .who = id };
 	DBT key, data;
@@ -701,7 +725,7 @@ ti_insert(struct tidbs dbs, unsigned id, time_t start, time_t end)
 	data.data = &ti;
 	data.size = sizeof(ti);
 
-	CBUG(dbs.ti->put(dbs.ti, NULL, &key, &data, 0));
+	CBUG(dbs->ti->put(dbs->ti, NULL, &key, &data, 0));
 
 	/* debug("ti_insert %u [%s, %s]\n", id, printtime(start), printtime(end)); */
 }
@@ -710,63 +734,65 @@ ti_insert(struct tidbs dbs, unsigned id, time_t start, time_t end)
  * person id
  */
 static void
-ti_finish_last(struct tidbs dbs, unsigned id, time_t end)
+ti_finish_last(struct tidbs *dbs, unsigned id, time_t end)
 {
 	struct ti ti;
+	DBT key, data;
+#ifndef PEOPLE_MAX
+	DBT pkey;
 	DBC *cur;
-	DBT key, pkey, data;
 	int res, dbflags = DB_SET;
 
-	CBUG(dbs.id->cursor(dbs.id, NULL, &cur, 0));
+	CBUG(dbs->id->cursor(dbs->id, NULL, &cur, 0));
+#endif
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
 
+#ifdef PEOPLE_MAX
+	ti.min = dbs->last_min[id];
+	ti.max = tinf;
+	ti.who = id;
+
+	key.data = &ti;
+	key.size = sizeof(ti);
+
+	CBUG(dbs->ti->del(dbs->ti, NULL, &key, 0));
+#else
 	key.data = &id;
 	key.size = sizeof(id);
 
-	while (1) {
-		res = cur->c_get(cur, &key, &data, dbflags);
+	debug("ti_finish_last %d", id);
 
-		if (res == DB_NOTFOUND)
-			break;
-
-		CBUG(res);
-
-		if (* (unsigned *) key.data != id)
-			break;
-
+	do {
+		CBUG(cur->c_get(cur, &key, &data, dbflags)); // even DB_NOTFOUND
+		ndebug(" %d", * (unsigned *) key.data);
+		CBUG(* (unsigned *) key.data != id);
 		memcpy(&ti, data.data, sizeof(ti));
 		dbflags = DB_NEXT;
+		ndebug("(%ld,%ld)", ti.min, ti.max);
+	} while (ti.max != tinf);
 
-		if (ti.max == tinf) {
-			memset(&pkey, 0, sizeof(DBT));
-			goto found;
-		}
-	}
-
-	memset(&pkey, 0, sizeof(DBT));
-	CBUG(cur->c_pget(cur, &key, &pkey, &data, DB_PREV));
-
-found:
+	ndebug("\n");
+	debug("Is secondary index corrupt yet?\n");
 	CBUG(cur->del(cur, 0));
-
-	ti.who = id;
+	cur->close(cur);
+	memset(&key, 0, sizeof(DBT));
+	key.data = data.data = &ti;
+	key.size = data.size = sizeof(ti);
+	/* ti.who = id; */
+#endif
 	ti.max = end;
 	data.data = &ti;
-	pkey.data = &ti;
-	data.size = pkey.size = sizeof(struct ti);
-
-	CBUG(dbs.ti->put(dbs.ti, NULL, &pkey, &data, 0));
+	data.size = sizeof(ti);
+	CBUG(dbs->ti->put(dbs->ti, NULL, &key, &data, 0));
 	/* debug("ti_finish_last %u [%s, %s]\n", */
 	/* 		ti.who, printtime(ti.min), printtime(ti.max)); */
 }
 
 /* intersect an interval with an AVL of intervals */
 static inline size_t
-ti_intersect(
-		struct tidbs dbs, struct ti * matches,
-		time_t min, time_t max)
+ti_intersect(struct tidbs *dbs, struct ti * matches, time_t min, time_t max)
 {
 	struct ti tmp;
 	DBC *cur;
@@ -774,7 +800,7 @@ ti_intersect(
 	size_t matches_l = 0;
 	int ret, dbflags = DB_SET_RANGE;
 
-	CBUG(dbs.max->cursor(dbs.max, NULL, &cur, 0));
+	CBUG(dbs->max->cursor(dbs->max, NULL, &cur, 0));
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -800,13 +826,14 @@ ti_intersect(
 		}
 	}
 
+	cur->close(cur);
+
 	return matches_l;
 }
 
 /* intersect a point with an AVL of intervals */
 static inline size_t
-ti_pintersect(
-		struct tidbs dbs, struct ti * matches, time_t ts)
+ti_pintersect(struct tidbs *dbs, struct ti * matches, time_t ts)
 {
 	return ti_intersect(dbs, matches, ts, ts);
 }
@@ -990,7 +1017,7 @@ splits_init(
  * interval [min, max]
  */
 static void
-splits_get(struct split_tailq *splits, struct tidbs dbs, time_t min, time_t max)
+splits_get(struct split_tailq *splits, struct tidbs *dbs, time_t min, time_t max)
 {
 	struct ti matches[MATCHES_MAX];
 	size_t matches_l;
@@ -1029,7 +1056,7 @@ splits_fill(struct split_tailq *splits, time_t min, time_t max)
 
 	split = TAILQ_FIRST(splits);
 	if (!split) {
-		splits_get(splits, npdbs, min, max);
+		splits_get(splits, &npdbs, min, max);
 		return;
 	}
 
@@ -1037,7 +1064,7 @@ splits_fill(struct split_tailq *splits, time_t min, time_t max)
 
 	if (split->min > last_max) {
 		struct split_tailq more_splits;
-		splits_get(&more_splits, npdbs, last_max, split->min);
+		splits_get(&more_splits, &npdbs, last_max, split->min);
 		splits_concat_before(splits, &more_splits, split);
 	}
 
@@ -1046,7 +1073,7 @@ splits_fill(struct split_tailq *splits, time_t min, time_t max)
 	TAILQ_FOREACH_SAFE(split, splits, entry, tmp) {
 		if (!split->who_list_l) {
 			struct split_tailq more_splits;
-			splits_get(&more_splits, npdbs, split->min, split->max);
+			splits_get(&more_splits, &npdbs, split->min, split->max);
 			splits_concat_before(splits, &more_splits, split);
 			TAILQ_REMOVE(splits, split, entry);
 		}
@@ -1056,7 +1083,7 @@ splits_fill(struct split_tailq *splits, time_t min, time_t max)
 
 	if (max > last_max) {
 		struct split_tailq more_splits;
-		splits_get(&more_splits, npdbs, last_max, max);
+		splits_get(&more_splits, &npdbs, last_max, max);
 		TAILQ_CONCAT(splits, &more_splits, entry);
 	}
 }
@@ -1076,7 +1103,7 @@ splits_pay(
 		time_t interval = split->max - split->min;
 		int cost = PAYER_TIP + interval * value
 			/ (split->who_list_l * bill_interval);
-		debug("  %lld %lld %lld %d", split->min, split->max, interval, cost);
+		debug("  %ld %ld %ld %d", split->min, split->max, interval, cost);
 
 		SLIST_FOREACH(who, &split->who_list, entry) {
 			if (who->who != payer)
@@ -1176,10 +1203,10 @@ process_pay(time_t ts, char *line)
 	line += read_currency(&value, line);
 	line += read_ts(&min, line);
 	line += read_ts(&max, line);
-	who_graph_line(id, 5); ndebug("%lld PAY %d %u %lld %lld", ts, id, value, min, max);
+	who_graph_line(id, 5); ndebug("%ld PAY %d %u %ld %ld", ts, id, value, min, max);
 	line_finish(line);
 
-	splits_get(&splits, pdbs, min, max);
+	splits_get(&splits, &pdbs, min, max);
 	splits_fill(&splits, min, max);
 	/* splits_debug(&splits); */
 	splits_pay(&splits, id, value, max - min);
@@ -1210,10 +1237,10 @@ process_buy(time_t ts, char *line)
 	line += read_id(&id, line);
 	read_currency(&value, line);
 	who_graph_line(id, 5);
-	ndebug("%lld BUY %d %d", ts, id, value);
+	ndebug("%ld BUY %d %d", ts, id, value);
 	line_finish(line);
 
-	matches_l = ti_pintersect(npdbs, matches, ts);
+	matches_l = ti_pintersect(&npdbs, matches, ts);
 	dvalue = value / matches_l + PAYER_TIP;
 
 	debug("  %d", dvalue);
@@ -1248,7 +1275,7 @@ process_transfer(time_t ts, char *line)
 	line += read_currency(&value, line);
 
 	who_graph_line(id_from, 5);
-	ndebug("%lld TRANSFER %d %d %d", ts, id_from, id_to, value);
+	ndebug("%ld TRANSFER %d %d %d", ts, id_from, id_to, value);
 	line_finish(line);
 
 	ge_add(id_from, id_to, value);
@@ -1273,18 +1300,18 @@ process_stop(time_t ts, char *line)
 
 	read_word(username, line, sizeof(username));
 	id = g_find(username);
-	who_graph_line(id, 1); ndebug("%lld STOP %d", ts, id);
+	who_graph_line(id, 1); ndebug("%ld STOP %d", ts, id);
 	line_finish(line);
 	who_graph_line(id, 3); fputc('\n', stderr);
 	who_remove(gwhodb, id);
 
 	if (id != g_notfound) {
-		ti_finish_last(pdbs, id, ts);
-		ti_finish_last(npdbs, id, ts);
+		ti_finish_last(&pdbs, id, ts);
+		ti_finish_last(&npdbs, id, ts);
 	} else {
 		id = g_insert(username);
-		ti_insert(pdbs, id, mtinf, ts);
-		ti_insert(npdbs, id, mtinf, ts);
+		ti_insert(&pdbs, id, mtinf, ts);
+		ti_insert(&npdbs, id, mtinf, ts);
 	}
 }
 
@@ -1305,10 +1332,13 @@ process_resume(time_t ts, char *line)
 	read_id(&id, line);
 	who_insert(gwhodb, id);
 	who_graph_line(id, 4); fputc('\n', stderr);
-	who_graph_line(id, 2); ndebug("%lld RESUME %d", ts, id);
+	who_graph_line(id, 2); ndebug("%ld RESUME %d", ts, id);
 	line_finish(line);
 	// TODO assert no interval for id at this ts
-	ti_insert(pdbs, id, ts, tinf);
+	ti_insert(&pdbs, id, ts, tinf);
+#ifdef PEOPLE_MAX
+	pdbs.last_min[id] = ts;
+#endif
 }
 
 /* This function is for handling lines in the format:
@@ -1337,12 +1367,12 @@ process_pause(time_t ts, char *line)
 	unsigned id;
 
 	read_id(&id, line);
-	who_graph_line(id, 1); ndebug("%lld PAUSE %d", ts, id);
+	who_graph_line(id, 1); ndebug("%ld PAUSE %d", ts, id);
 	line_finish(line);
 	who_graph_line(id, 3); fputc('\n', stderr);
 	who_remove(gwhodb, id);
 	// TODO assert interval for id at this ts
-	ti_finish_last(pdbs, id, ts);
+	ti_finish_last(&pdbs, id, ts);
 }
 
 /* This function is for handling lines in the format:
@@ -1363,10 +1393,14 @@ process_start(time_t ts, char *line)
 	id = g_insert(username);
 	who_insert(gwhodb, id);
 	who_graph_line(id, 4); fputc('\n', stderr);
-	who_graph_line(id, 2); ndebug("%lld START %d", ts, id);
+	who_graph_line(id, 2); ndebug("%ld START %d", ts, id);
 	line_finish(line);
-	ti_insert(pdbs, id, ts, tinf);
-	ti_insert(npdbs, id, ts, tinf);
+	ti_insert(&pdbs, id, ts, tinf);
+	ti_insert(&npdbs, id, ts, tinf);
+#ifdef PEOPLE_MAX
+	pdbs.last_min[id] = ts;
+	npdbs.last_min[id] = ts;
+#endif
 }
 
 /******
