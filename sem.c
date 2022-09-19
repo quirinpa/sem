@@ -48,9 +48,11 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef __OpenBSD__
+#define TS_FMT "%lld"
 #include <db4/db.h>
 #include <sys/queue.h>
 #else
+#define TS_FMT "%ld"
 #ifdef ALPINE
 #include <stdint.h>
 #include <db4/db.h>
@@ -58,6 +60,7 @@
 #include <db.h>
 #endif
 #include <bsd/sys/queue.h>
+/* #define PEOPLE_MAX 1024 */
 #endif
 #include <time.h>
 
@@ -77,7 +80,6 @@
 #define DATE_MAX_LEN 20
 #define CURRENCY_MAX_LEN 32
 #define MATCHES_MAX 32
-/* #define PEOPLE_MAX 1024 */
 
 struct ti {
 	time_t min, max;
@@ -770,7 +772,7 @@ ti_finish_last(struct tidbs *dbs, unsigned id, time_t end)
 		CBUG(* (unsigned *) key.data != id);
 		memcpy(&ti, data.data, sizeof(ti));
 		dbflags = DB_NEXT;
-		ndebug("(%ld,%ld)", ti.min, ti.max);
+		ndebug("(" TS_FMT "," TS_FMT ")", ti.min, ti.max);
 	} while (ti.max != tinf);
 
 	ndebug("\n");
@@ -1103,7 +1105,7 @@ splits_pay(
 		time_t interval = split->max - split->min;
 		int cost = PAYER_TIP + interval * value
 			/ (split->who_list_l * bill_interval);
-		debug("  %ld %ld %ld %d", split->min, split->max, interval, cost);
+		debug("  " TS_FMT " " TS_FMT " " TS_FMT " %d", split->min, split->max, interval, cost);
 
 		SLIST_FOREACH(who, &split->who_list, entry) {
 			if (who->who != payer)
@@ -1203,7 +1205,7 @@ process_pay(time_t ts, char *line)
 	line += read_currency(&value, line);
 	line += read_ts(&min, line);
 	line += read_ts(&max, line);
-	who_graph_line(id, 5); ndebug("%ld PAY %d %u %ld %ld", ts, id, value, min, max);
+	who_graph_line(id, 5); ndebug(TS_FMT " PAY %d %u " TS_FMT " " TS_FMT "", ts, id, value, min, max);
 	line_finish(line);
 
 	splits_get(&splits, &pdbs, min, max);
@@ -1237,7 +1239,7 @@ process_buy(time_t ts, char *line)
 	line += read_id(&id, line);
 	read_currency(&value, line);
 	who_graph_line(id, 5);
-	ndebug("%ld BUY %d %d", ts, id, value);
+	ndebug(TS_FMT " BUY %d %d", ts, id, value);
 	line_finish(line);
 
 	matches_l = ti_pintersect(&npdbs, matches, ts);
@@ -1275,7 +1277,7 @@ process_transfer(time_t ts, char *line)
 	line += read_currency(&value, line);
 
 	who_graph_line(id_from, 5);
-	ndebug("%ld TRANSFER %d %d %d", ts, id_from, id_to, value);
+	ndebug(TS_FMT " TRANSFER %d %d %d", ts, id_from, id_to, value);
 	line_finish(line);
 
 	ge_add(id_from, id_to, value);
@@ -1300,7 +1302,7 @@ process_stop(time_t ts, char *line)
 
 	read_word(username, line, sizeof(username));
 	id = g_find(username);
-	who_graph_line(id, 1); ndebug("%ld STOP %d", ts, id);
+	who_graph_line(id, 1); ndebug(TS_FMT " STOP %d", ts, id);
 	line_finish(line);
 	who_graph_line(id, 3); fputc('\n', stderr);
 	who_remove(gwhodb, id);
@@ -1332,7 +1334,7 @@ process_resume(time_t ts, char *line)
 	read_id(&id, line);
 	who_insert(gwhodb, id);
 	who_graph_line(id, 4); fputc('\n', stderr);
-	who_graph_line(id, 2); ndebug("%ld RESUME %d", ts, id);
+	who_graph_line(id, 2); ndebug(TS_FMT " RESUME %d", ts, id);
 	line_finish(line);
 	// TODO assert no interval for id at this ts
 	ti_insert(&pdbs, id, ts, tinf);
@@ -1367,7 +1369,7 @@ process_pause(time_t ts, char *line)
 	unsigned id;
 
 	read_id(&id, line);
-	who_graph_line(id, 1); ndebug("%ld PAUSE %d", ts, id);
+	who_graph_line(id, 1); ndebug(TS_FMT " PAUSE %d", ts, id);
 	line_finish(line);
 	who_graph_line(id, 3); fputc('\n', stderr);
 	who_remove(gwhodb, id);
@@ -1393,7 +1395,7 @@ process_start(time_t ts, char *line)
 	id = g_insert(username);
 	who_insert(gwhodb, id);
 	who_graph_line(id, 4); fputc('\n', stderr);
-	who_graph_line(id, 2); ndebug("%ld START %d", ts, id);
+	who_graph_line(id, 2); ndebug(TS_FMT " START %d", ts, id);
 	line_finish(line);
 	ti_insert(&pdbs, id, ts, tinf);
 	ti_insert(&npdbs, id, ts, tinf);
