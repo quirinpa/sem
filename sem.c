@@ -740,19 +740,18 @@ ti_finish_last(struct tidbs *dbs, unsigned id, time_t end)
 	key.data = &id;
 	key.size = sizeof(id);
 
-	debug("ti_finish_last %d", id);
+	/* debug("ti_finish_last %d", id); */
 
 	do {
 		CBUG(cur->c_get(cur, &key, &data, dbflags)); // even DB_NOTFOUND
-		ndebug(" %d", * (unsigned *) key.data);
+		/* ndebug(" %d", * (unsigned *) key.data); */
 		CBUG(* (unsigned *) key.data != id);
 		memcpy(&ti, data.data, sizeof(ti));
 		dbflags = DB_NEXT;
-		ndebug("(" TS_FMT "," TS_FMT ")", ti.min, ti.max);
+		/* ndebug("(" TS_FMT "," TS_FMT ")", ti.min, ti.max); */
 	} while (ti.max != tinf);
 
-	ndebug("\n");
-	debug("Is secondary index corrupt yet?\n");
+	/* ndebug("\n"); */
 	CBUG(cur->del(cur, 0));
 	cur->close(cur);
 	memset(&key, 0, sizeof(DBT));
@@ -1080,7 +1079,7 @@ splits_pay(
 		time_t interval = split->max - split->min;
 		int cost = PAYER_TIP + interval * value
 			/ (split->who_list_l * bill_interval);
-		debug("  " TS_FMT " " TS_FMT " " TS_FMT " %d", split->min, split->max, interval, cost);
+		debug("  " TS_FMT " " TS_FMT " %d", split->max, interval, cost);
 
 		SLIST_FOREACH(who, &split->who_list, entry) {
 			if (who->who != payer)
