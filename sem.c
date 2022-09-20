@@ -842,15 +842,16 @@ ti_pintersect(struct tidbs *dbs, struct match_tailq *matches, time_t ts)
 
 /* debugs an array of matches */
 static void
-matches_debug(struct ti *matches, size_t matches_l)
+matches_debug(struct match_tailq *matches)
 {
-	struct ti tmp;
+	struct match *match;
 	int i;
-	for (i = 0; i < matches_l; i++) {
-		tmp = matches[i];
-		debug("match %u [%s, %s]\n", tmp.who,
-				printtime(tmp.min), printtime(tmp.max));
+	graph_head(-1, 0);
+	fprintf(stderr, "matches_debug");
+	TAILQ_FOREACH(match, matches, entry) {
+		fprintf(stderr, " (%u, " TS_FMT ", " TS_FMT ")", match->ti.who, match->ti.min, match->ti.max);
 	}
+	fputc('\n', stderr);
 }
 
 /* makes all provided matches lie within the provided interval [min, max] */
@@ -860,7 +861,6 @@ matches_fix(struct match_tailq *matches, time_t min, time_t max)
 	struct match *match;
 
 	TAILQ_FOREACH(match, matches, entry) {
-		debug("matches_fix %u [" TS_FMT ", " TS_FMT "]\n", match->ti.who, match->ti.min, match->ti.max);
 		if (match->ti.min < min)
 			match->ti.min = min;
 		if (match->ti.max > max)
@@ -892,39 +892,39 @@ isplit_cmp(const void *ap, const void *bp)
 
 // assumes isplits is of size matches_l * 2
 /* creates intermediary isplits */
-static inline unsigned
-isplits_create(struct isplit_tailq *isplits, struct match_tailq *matches) {
+static inline struct isplit *
+isplits_create(struct match_tailq *matches, size_t matches_l) {
+	struct isplit *isplits = (struct isplit *) malloc(sizeof(struct isplit) * matches_l * 2);
 	struct match *match;
-	unsigned ret = 0;
-
-	TAILQ_INIT(isplits);
+	unsigned i = 0;
 
 	TAILQ_FOREACH(match, matches, entry) {
-		struct isplit *isplit = (struct isplit *) malloc(sizeof(struct isplit));
+		struct isplit *isplit = isplits + i * 2;
 		isplit->ts = match->ti.min;
 		isplit->max = 0;
 		isplit->who = match->ti.who;
-		TAILQ_INSERT_TAIL(isplits, isplit, entry);
-		isplit = (struct isplit *) malloc(sizeof(struct isplit));
+		isplit++;
 		isplit->ts = match->ti.max;
 		isplit->max = 1;
 		isplit->who = match->ti.who;
-		TAILQ_INSERT_TAIL(isplits, isplit, entry);
-		ret += 2;
+		i ++;
 	};
 
-	return ret;
+	return isplits;
 }
 
 /* debugs intermediary isplits */
-static void
-isplits_debug(struct isplit_tailq *isplits) {
+static inline void
+isplits_debug(struct isplit *isplits, unsigned matches_l) {
+	int i;
 	struct isplit *isplit;
 
-	debug("isplits_debug ");
-	TAILQ_FOREACH(isplit, isplits, entry)
-		ndebug("(" TS_FMT ", %d, %u) ", isplit->ts, isplit->max, isplit->who);
-	ndebug("\n");
+	fprintf(stderr, "isplits_debug ");
+	for (i = 0; i < matches_l * 2; i++) {
+		struct isplit *isplit = isplits + i;
+		fprintf(stderr, "(" TS_FMT ", %d, %u) ", isplit->ts, isplit->max, isplit->who);
+	}
+	fputc('\n', stderr);
 }
 
 /******
@@ -948,17 +948,17 @@ split_create(time_t min, time_t max)
 static inline void
 splits_create(
 		struct split_tailq *splits,
-		struct isplit_tailq *isplits,
-		size_t isplits_l)
+		struct isplit *isplits,
+		size_t matches_l)
 {
-	struct isplit *isplit = TAILQ_FIRST(isplits);
 	int i;
 
 	TAILQ_INIT(splits);
 
 	who_drop(whodb);
-	for (i = 0; isplit && i < isplits_l - 1; i++) {
-		struct isplit *isplit2 = TAILQ_NEXT(isplit, entry);
+	for (i = 0; i < matches_l * 2 - 1; i++) {
+		struct isplit *isplit = isplits + i;
+		struct isplit *isplit2 = isplits + i + 1;
 		struct split *split;
 		time_t n, m;
 
@@ -975,8 +975,6 @@ splits_create(
 
 		split = split_create(n, m);
 		TAILQ_INSERT_TAIL(splits, split, entry);
-		isplit = TAILQ_NEXT(isplit, entry);
-		isplit = TAILQ_NEXT(isplit, entry);
 	}
 }
 
@@ -986,39 +984,36 @@ splits_debug(struct split_tailq *splits)
 {
 	struct split *split;
 
-	debug("splits_debug ");
+	graph_head(-1, 0);
+	fprintf(stderr, "splits_debug ");
 	TAILQ_FOREACH(split, splits, entry) {
 		struct who *who, *tmp;
-		ndebug("(" TS_FMT ", " TS_FMT ", { ", split->min, split->max);
+		fprintf(stderr, "(" TS_FMT ", " TS_FMT ", { ", split->min, split->max);
 
 		SLIST_FOREACH_SAFE(who, &split->who_list, entry, tmp)
-			ndebug("%u ", who->who);
+			fprintf(stderr, "%u ", who->who);
 
-		ndebug("}) ");
+		fprintf(stderr, "}) ");
 	}
-	ndebug("\n");
+	fprintf(stderr, "\n");
 }
 
 /* From a list of matched intervals, this creates the tail queue of splits
  */
 static void
-splits_init(struct split_tailq *splits, struct match_tailq *matches)
+splits_init(struct split_tailq *splits, struct match_tailq *matches, unsigned matches_l)
 {
-	size_t isplits_l;
-	struct isplit_tailq isplits;
+	struct isplit *isplits;
 	struct isplit *isplit;
 	struct isplit *buf;
 	int i = 0;
 
-	isplits_l = isplits_create(&isplits, matches);
-	buf = (struct isplit *) malloc(sizeof(struct isplit) * isplits_l);
-	TAILQ_FOREACH(isplit, &isplits, entry) {
-		memcpy(buf + i, isplit, sizeof(struct isplit));
-		i++;
-	}
-	qsort(buf, isplits_l, sizeof(struct isplit), isplit_cmp);
-	isplits_debug(&isplits);
-	splits_create(splits, &isplits, isplits_l);
+	isplits = isplits_create(matches, matches_l);
+	/* isplits_debug(isplits, matches_l); */
+	qsort(isplits, matches_l * 2, sizeof(struct isplit), isplit_cmp);
+	/* isplits_debug(isplits, matches_l); */
+	splits_create(splits, isplits, matches_l);
+	free(isplits);
 }
 
 /* Obtains a tail queue of splits from the intervals that intersect the query
@@ -1028,11 +1023,11 @@ static void
 splits_get(struct split_tailq *splits, struct tidbs *dbs, time_t min, time_t max)
 {
 	struct match_tailq matches;
-	TAILQ_INIT(splits);
-	ti_intersect(dbs, &matches, min, max);
-	/* matches_debug(matches, matches_l); */
+	unsigned matches_l = ti_intersect(dbs, &matches, min, max);
+	/* matches_debug(&matches); */
 	matches_fix(&matches, min, max);
-	splits_init(splits, &matches);
+	/* matches_debug(&matches); */
+	return splits_init(splits, &matches, matches_l);
 }
 
 /* Inserts a tail queue of splits within another, before the element provided
@@ -1216,7 +1211,7 @@ process_pay(time_t ts, char *line)
 
 	splits_get(&splits, &pdbs, min, max);
 	splits_fill(&splits, min, max);
-	splits_debug(&splits);
+	/* splits_debug(&splits); */
 	splits_pay(&splits, id, value, max - min);
 	/* splits_free(&splits); */
 }
