@@ -127,8 +127,8 @@ BUY <DATE> <PERSON_ID> <AMOUNT> [DESCRIPTION]
 PAY <DATE> <PERSON_ID> <AMOUNT> <START_DATE> <END_DATE> [<BILL_TYPE_ID> <ENTITY> <REFERENCE> ...]
 ```
 
-# Dependency
-This program is dependant on BerkeleyDB 4.6 or similar.
+# Dependencies
+This program is dependant on libdb, on linux, it is also dependant on libbsd.
 
 # Algorithm
 I've commented the code (sem.c) very extensively in order to make it understandable to
