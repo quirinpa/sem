@@ -3,16 +3,15 @@ This is a solution for calculating shared expenses between people living in the 
 From this file, debt between participants can be calculated freely and consistently.
 
 # Building
-On Linux, you might have to provide "LIBDB\_PATH", if compiling on Alpine Linux, also provide "ALPINE=y".
-
-To build on Alpine Linux:
+Here's how to build on Alpine Linux:
 ```sh
 make ALPINE=y
 ```
-To build on regular linux, you might have to provide "LIBDB\_PATH" in case the default doesn't work for you. Here's an example:
+To build on other distributions you might have to provide "LIBDB\_PATH" in case the default doesn't work for you. Here's an example:
 ```sh
 make LIBDB_PATH=$LIBDB_PATH
 ```
+To build on OpenBSD, just "make" will be enough.
 
 # Running
 You can:
