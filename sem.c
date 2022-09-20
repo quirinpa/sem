@@ -1217,7 +1217,7 @@ process_pay(time_t ts, char *line)
 			if (pflags & PF_MACHINE)
 				fprintf(stderr, TS_FMT ":%s PAY %d %u " TS_FMT ":%s " TS_FMT ":%s", ts, tss, id, value, min, mins, max, maxs);
 			else
-				fprintf(stderr, "%s PAY %d %u %s %s", tss, id, value, mins, maxs);
+				fprintf(stderr, "PAY %s %d %u %s %s", tss, id, value, mins, maxs);
 			free(tss);
 			free(mins);
 			free(maxs);
@@ -1263,7 +1263,7 @@ process_buy(time_t ts, char *line)
 			if (pflags & PF_MACHINE)
 				fprintf(stderr, TS_FMT ":%s BUY %d %d", ts, tss, id, value);
 			else
-				fprintf(stderr, "%s BUY %d %d", tss, id, value);
+				fprintf(stderr, "BUY %s %d %d", tss, id, value);
 			free(tss);
 		} else
 			fprintf(stderr, TS_FMT " BUY %d %d", ts, id, value);
@@ -1312,7 +1312,7 @@ process_transfer(time_t ts, char *line)
 			if (pflags & PF_MACHINE)
 				fprintf(stderr, TS_FMT ":%s TRANSFER %d %d %d", ts, tss, id_from, id_to, value);
 			else
-				fprintf(stderr, "%s TRANSFER %d %d %d", tss, id_from, id_to, value);
+				fprintf(stderr, "TRANSFER %s %d %d %d", tss, id_from, id_to, value);
 			free(tss);
 		} else
 			fprintf(stderr, TS_FMT " TRANSFER %d %d %d", ts, id_from, id_to, value);
@@ -1348,7 +1348,7 @@ process_stop(time_t ts, char *line)
 			if (pflags & PF_MACHINE)
 				fprintf(stderr, TS_FMT ":%s STOP %d", ts, tss, id);
 			else
-				fprintf(stderr, "%s STOP %d", tss, id);
+				fprintf(stderr, "STOP %s %d", tss, id);
 			free(tss);
 		} else
 			fprintf(stderr, TS_FMT " STOP %d", ts, id);
@@ -1395,7 +1395,7 @@ process_resume(time_t ts, char *line)
 			if (pflags & PF_MACHINE)
 				fprintf(stderr, TS_FMT ":%s RESUME %d", ts, tss, id);
 			else
-				fprintf(stderr, "%s RESUME %d", tss, id);
+				fprintf(stderr, "RESUME %s %d", tss, id);
 			free(tss);
 		} else
 			fprintf(stderr, TS_FMT " RESUME %d", ts, id);
@@ -1438,7 +1438,7 @@ process_pause(time_t ts, char *line)
 			if (pflags & PF_MACHINE)
 				fprintf(stderr, TS_FMT ":%s PAUSE %d", ts, tss, id);
 			else
-				fprintf(stderr, "%s PAUSE %d", tss, id);
+				fprintf(stderr, "PAUSE %s %d", tss, id);
 			free(tss);
 		} else
 			fprintf(stderr, TS_FMT " PAUSE %d", ts, id);
@@ -1479,7 +1479,7 @@ process_start(time_t ts, char *line)
 			if (pflags & PF_MACHINE)
 				fprintf(stderr, TS_FMT ":%s START %d", ts, tss, id);
 			else
-				fprintf(stderr, "%s START %d", tss, id);
+				fprintf(stderr, "START %s %d", tss, id);
 			free(tss);
 		} else
 			fprintf(stderr, TS_FMT " START %d", ts, id);
