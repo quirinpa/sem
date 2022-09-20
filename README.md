@@ -45,7 +45,7 @@ you get a bigger result. Here's the last section of it:
 |   2022-08-20 2678400 834 quirinpa
 * PAY 2022-09-02 quirinpa 4136 2022-07-27 2022-08-26 # light
 |   2022-08-26 2592000 4137 quirinpa
-* BUY 2022-09-06 quirinpa 853 # 8.53 sonasol, lixivia, sonasol wc, sacos do lixo
+* BUY 2022-09-06 quirinpa 853 # sonasol, bleach, sonasol wc, garbage bags
 |   427 quirinpa leon
 \
 *| RESUME 2022-09-11 leon
