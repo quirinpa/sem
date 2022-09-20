@@ -64,15 +64,15 @@
 #include <time.h>
 
 #define ndebug(fmt, ...) \
-	if (sem_flags & PT_DEBUG) \
+	if (pflags & PF_DEBUG) \
 		fprintf(stderr, fmt, ##__VA_ARGS__)
 
 #define graph_head(id, flags) \
-	if (sem_flags & PT_GRAPH) \
+	if (pflags & PF_GRAPH) \
 		who_graph_line(id, flags);
 
 #define debug(fmt, ...) \
-	if (sem_flags & PT_DEBUG) { \
+	if (pflags & PF_DEBUG) { \
 		graph_head(-1, 0); \
 		fprintf(stderr, fmt, ##__VA_ARGS__); \
 	}
@@ -128,9 +128,11 @@ struct tidbs {
 	DB *id; // secondary DB (BTREE) with ids as primary key
 } pdbs, npdbs;
 
-enum sem_flags {
-	PT_GRAPH = 1,
-	PT_DEBUG = 2,
+enum pflags {
+	PF_GRAPH = 1,
+	PF_DEBUG = 2,
+	PF_HUMAN = 4,
+	PF_MACHINE = 8,
 };
 
 const time_t mtinf = (time_t) LONG_MIN; // minus infinite
@@ -149,7 +151,7 @@ static DB_ENV *dbe = NULL;
 
 unsigned g_len = 0;
 unsigned g_notfound = (unsigned) -1;
-unsigned sem_flags = 0;
+unsigned pflags = 0;
 
 /* create a person that we can insert in the db of present people */
 static inline struct who *
@@ -592,13 +594,10 @@ ge_add(unsigned id_from, unsigned id_to, int value)
 
 	cvalue = ge_get(id_from, id_to);
 
-	if (id_from > id_to) {
-		/* debug("ge_add %u -> %u : %d\n", ids[0], ids[1], -value); */
-		value = - cvalue - value; // FIXME?
-	} else {
-		/* debug("ge_add %u -> %u : %d\n", ids[0], ids[1], value); */
+	if (id_from > id_to)
+		value = - cvalue - value;
+	else
 		value = cvalue + value;
-	}
 
 	data.data = &value;
 	data.size = sizeof(value);
@@ -1102,7 +1101,18 @@ splits_pay(
 		time_t interval = split->max - split->min;
 		int cost = PAYER_TIP + interval * value
 			/ (split->who_list_l * bill_interval);
-		debug("  " TS_FMT " " TS_FMT " %d", split->max, interval, cost);
+		if (pflags & PF_DEBUG) {
+			graph_head(-1, 0);
+			if (pflags & PF_HUMAN) {
+				char *smaxs = printtime(split->max);
+				if (pflags & PF_MACHINE)
+					fprintf(stderr, "  " TS_FMT ":%s " TS_FMT " %d", split->max, smaxs, interval, cost);
+				else
+					fprintf(stderr, "  %s " TS_FMT " %d", smaxs, interval, cost);
+				free(smaxs);
+			} else
+				fprintf(stderr, "  " TS_FMT " " TS_FMT " %d", split->max, interval, cost);
+		}
 
 		SLIST_FOREACH(who, &split->who_list, entry) {
 			if (who->who != payer)
@@ -1200,9 +1210,19 @@ process_pay(time_t ts, char *line)
 	line += read_currency(&value, line);
 	line += read_ts(&min, line);
 	line += read_ts(&max, line);
-	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		graph_head(id, 5);
-		fprintf(stderr, TS_FMT " PAY %d %u " TS_FMT " " TS_FMT "", ts, id, value, min, max);
+		if (pflags & PF_HUMAN) {
+			char *tss = printtime(ts), *mins = printtime(min), *maxs = printtime(max);
+			if (pflags & PF_MACHINE)
+				fprintf(stderr, TS_FMT ":%s PAY %d %u " TS_FMT ":%s " TS_FMT ":%s", ts, tss, id, value, min, mins, max, maxs);
+			else
+				fprintf(stderr, "%s PAY %d %u %s %s", tss, id, value, mins, maxs);
+			free(tss);
+			free(mins);
+			free(maxs);
+		} else
+			fprintf(stderr, TS_FMT " PAY %d %u " TS_FMT " " TS_FMT "", ts, id, value, min, max);
 		line_finish(line);
 	}
 
@@ -1236,8 +1256,17 @@ process_buy(time_t ts, char *line)
 
 	line += read_id(&id, line);
 	read_currency(&value, line);
-	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
-		graph_head(id, 5); fprintf(stderr, TS_FMT " BUY %d %d", ts, id, value);
+	if (pflags & (PF_GRAPH | PF_DEBUG)) {
+		graph_head(id, 5);
+		if (pflags & PF_HUMAN) {
+			char *tss = printtime(ts);
+			if (pflags & PF_MACHINE)
+				fprintf(stderr, TS_FMT ":%s BUY %d %d", ts, tss, id, value);
+			else
+				fprintf(stderr, "%s BUY %d %d", tss, id, value);
+			free(tss);
+		} else
+			fprintf(stderr, TS_FMT " BUY %d %d", ts, id, value);
 		line_finish(line);
 	}
 
@@ -1248,9 +1277,11 @@ process_buy(time_t ts, char *line)
 	debug("  %d", dvalue);
 
 	// assert there are not multiple intervals with the same id?
-	TAILQ_FOREACH(match, &matches, entry)
+	TAILQ_FOREACH(match, &matches, entry) {
 		if (match->ti.who != id)
 			ge_add(id, match->ti.who, dvalue);
+		ndebug(" %d", match->ti.who);
+	}
 
 	ndebug("\n");
 }
@@ -1274,9 +1305,17 @@ process_transfer(time_t ts, char *line)
 	line += read_id(&id_to, line);
 	line += read_currency(&value, line);
 
-	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		graph_head(id_from, 5);
-		fprintf(stderr, TS_FMT " TRANSFER %d %d %d", ts, id_from, id_to, value);
+		if (pflags & PF_HUMAN) {
+			char *tss = printtime(ts);
+			if (pflags & PF_MACHINE)
+				fprintf(stderr, TS_FMT ":%s TRANSFER %d %d %d", ts, tss, id_from, id_to, value);
+			else
+				fprintf(stderr, "%s TRANSFER %d %d %d", tss, id_from, id_to, value);
+			free(tss);
+		} else
+			fprintf(stderr, TS_FMT " TRANSFER %d %d %d", ts, id_from, id_to, value);
 		line_finish(line);
 	}
 
@@ -1302,10 +1341,19 @@ process_stop(time_t ts, char *line)
 
 	read_word(username, line, sizeof(username));
 	id = g_find(username);
-	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
-		graph_head(id, 1); fprintf(stderr, TS_FMT " STOP %d", ts, id);
+	if (pflags & (PF_GRAPH | PF_DEBUG)) {
+		graph_head(id, 1);
+		if (pflags & PF_HUMAN) {
+			char *tss = printtime(ts);
+			if (pflags & PF_MACHINE)
+				fprintf(stderr, TS_FMT ":%s STOP %d", ts, tss, id);
+			else
+				fprintf(stderr, "%s STOP %d", tss, id);
+			free(tss);
+		} else
+			fprintf(stderr, TS_FMT " STOP %d", ts, id);
 		line_finish(line);
-		if (sem_flags & PT_GRAPH) {
+		if (pflags & PF_GRAPH) {
 			graph_head(id, 3); fputc('\n', stderr);
 		}
 	}
@@ -1337,11 +1385,20 @@ process_resume(time_t ts, char *line)
 
 	read_id(&id, line);
 	who_insert(gwhodb, id);
-	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
-		if (sem_flags & PT_GRAPH) {
+	if (pflags & (PF_GRAPH | PF_DEBUG)) {
+		if (pflags & PF_GRAPH) {
 			graph_head(id, 4); fputc('\n', stderr);
 		}
-		graph_head(id, 2); fprintf(stderr, TS_FMT " RESUME %d", ts, id);
+		graph_head(id, 2);
+		if (pflags & PF_HUMAN) {
+			char *tss = printtime(ts);
+			if (pflags & PF_MACHINE)
+				fprintf(stderr, TS_FMT ":%s RESUME %d", ts, tss, id);
+			else
+				fprintf(stderr, "%s RESUME %d", tss, id);
+			free(tss);
+		} else
+			fprintf(stderr, TS_FMT " RESUME %d", ts, id);
 		line_finish(line);
 	}
 	// TODO assert no interval for id at this ts
@@ -1374,10 +1431,19 @@ process_pause(time_t ts, char *line)
 	unsigned id;
 
 	read_id(&id, line);
-	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
-		graph_head(id, 1); fprintf(stderr, TS_FMT " PAUSE %d", ts, id);
+	if (pflags & (PF_GRAPH | PF_DEBUG)) {
+		graph_head(id, 1);
+		if (pflags & PF_HUMAN) {
+			char *tss = printtime(ts);
+			if (pflags & PF_MACHINE)
+				fprintf(stderr, TS_FMT ":%s PAUSE %d", ts, tss, id);
+			else
+				fprintf(stderr, "%s PAUSE %d", tss, id);
+			free(tss);
+		} else
+			fprintf(stderr, TS_FMT " PAUSE %d", ts, id);
 		line_finish(line);
-		if (sem_flags & PT_GRAPH) {
+		if (pflags & PF_GRAPH) {
 			graph_head(id, 3); fputc('\n', stderr);
 		}
 	}
@@ -1403,11 +1469,20 @@ process_start(time_t ts, char *line)
 	read_word(username, line, sizeof(username));
 	id = g_insert(username);
 	who_insert(gwhodb, id);
-	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
-		if (sem_flags & PT_GRAPH) {
+	if (pflags & (PF_GRAPH | PF_DEBUG)) {
+		if (pflags & PF_GRAPH) {
 			graph_head(id, 4); fputc('\n', stderr);
 		}
-		graph_head(id, 2); fprintf(stderr, TS_FMT " START %d", ts, id);
+		graph_head(id, 2);
+		if (pflags & PF_HUMAN) {
+			char *tss = printtime(ts);
+			if (pflags & PF_MACHINE)
+				fprintf(stderr, TS_FMT ":%s START %d", ts, tss, id);
+			else
+				fprintf(stderr, "%s START %d", tss, id);
+			free(tss);
+		} else
+			fprintf(stderr, TS_FMT " START %d", ts, id);
 		line_finish(line);
 	}
 	ti_insert(&pdbs, id, ts, tinf);
@@ -1514,14 +1589,22 @@ main(int argc, char *argv[])
 	int ret;
 	char c;
 
-	while ((c = getopt(argc, argv, "gd")) != -1) {
+	while ((c = getopt(argc, argv, "gdhm")) != -1) {
 		switch (c) {
 		case 'd':
-			sem_flags |= PT_DEBUG;
+			pflags |= PF_DEBUG;
 			break;
 
 		case 'g':
-			sem_flags |= PT_GRAPH;
+			pflags |= PF_GRAPH;
+			break;
+			
+		case 'h':
+			pflags |= PF_HUMAN;
+			break;
+
+		case 'm':
+			pflags |= PF_MACHINE | PF_HUMAN;
 			break;
 			
 		default:
