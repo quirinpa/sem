@@ -131,10 +131,6 @@ PAY <DATE> <PERSON_ID> <AMOUNT> <START_DATE> <END_DATE> [<BILL_TYPE_ID> <ENTITY>
 # Dependency
 This program is dependant on BerkeleyDB 4.6 or similar.
 
-# Running
-```sh
-cat data.txt | ./sem
-```
 # Algorithm
 I've commented the code (sem.c) very extensively in order to make it understandable to
 non-programmers. Please take a look at it if you like.
