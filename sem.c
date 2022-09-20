@@ -63,16 +63,22 @@
 #endif
 #include <time.h>
 
-/* #define NDEBUG */
-#ifdef NDEBUG
-#define debug(...) do {} while (0)
-#define CBUG(c) if (c) abort()
-#else
-#define ndebug(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
-#define debug(fmt, ...) who_graph_line(-1, 0); fprintf(stderr, fmt, ##__VA_ARGS__)
+#define ndebug(fmt, ...) \
+	if (sem_flags & PT_DEBUG) \
+		fprintf(stderr, fmt, ##__VA_ARGS__)
+
+#define graph_head(id, flags) \
+	if (sem_flags & PT_GRAPH) \
+		who_graph_line(id, flags);
+
+#define debug(fmt, ...) \
+	if (sem_flags & PT_DEBUG) { \
+		graph_head(-1, 0); \
+		fprintf(stderr, fmt, ##__VA_ARGS__); \
+	}
+
 #define CBUG(c) if (c) { fprintf(stderr, "CBUG! " #c " %s:%s:%d\n", \
 		__FILE__, __FUNCTION__, __LINE__); raise(SIGINT); }
-#endif
 
 #define PAYER_TIP 1
 #define USERNAME_MAX_LEN 32
@@ -116,6 +122,11 @@ struct tidbs {
 	DB *id; // secondary DB (BTREE) with ids as primary key
 } pdbs, npdbs;
 
+enum sem_flags {
+	PT_GRAPH = 1,
+	PT_DEBUG = 2,
+};
+
 const time_t mtinf = (time_t) LONG_MIN; // minus infinite
 const time_t tinf = (time_t) LONG_MAX; // infinite
 
@@ -132,6 +143,7 @@ static DB_ENV *dbe = NULL;
 
 unsigned g_len = 0;
 unsigned g_notfound = (unsigned) -1;
+unsigned sem_flags = 0;
 
 /* create a person that we can insert in the db of present people */
 static inline struct who *
@@ -1112,7 +1124,7 @@ static inline void
 line_finish(char *line)
 {
 	if (*line && *line != '\n')
-		ndebug(" #%s", line);
+		fprintf(stderr, " #%s", line);
 	else
 		fputc('\n', stderr);
 }
@@ -1179,8 +1191,11 @@ process_pay(time_t ts, char *line)
 	line += read_currency(&value, line);
 	line += read_ts(&min, line);
 	line += read_ts(&max, line);
-	who_graph_line(id, 5); ndebug(TS_FMT " PAY %d %u " TS_FMT " " TS_FMT "", ts, id, value, min, max);
-	line_finish(line);
+	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+		graph_head(id, 5);
+		fprintf(stderr, TS_FMT " PAY %d %u " TS_FMT " " TS_FMT "", ts, id, value, min, max);
+		line_finish(line);
+	}
 
 	splits_get(&splits, &pdbs, min, max);
 	splits_fill(&splits, min, max);
@@ -1212,9 +1227,10 @@ process_buy(time_t ts, char *line)
 
 	line += read_id(&id, line);
 	read_currency(&value, line);
-	who_graph_line(id, 5);
-	ndebug(TS_FMT " BUY %d %d", ts, id, value);
-	line_finish(line);
+	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+		graph_head(id, 5); fprintf(stderr, TS_FMT " BUY %d %d", ts, id, value);
+		line_finish(line);
+	}
 
 	matches_l = ti_pintersect(&npdbs, matches, ts);
 	dvalue = value / matches_l + PAYER_TIP;
@@ -1250,9 +1266,11 @@ process_transfer(time_t ts, char *line)
 	line += read_id(&id_to, line);
 	line += read_currency(&value, line);
 
-	who_graph_line(id_from, 5);
-	ndebug(TS_FMT " TRANSFER %d %d %d", ts, id_from, id_to, value);
-	line_finish(line);
+	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+		graph_head(id_from, 5);
+		fprintf(stderr, TS_FMT " TRANSFER %d %d %d", ts, id_from, id_to, value);
+		line_finish(line);
+	}
 
 	ge_add(id_from, id_to, value);
 }
@@ -1276,9 +1294,13 @@ process_stop(time_t ts, char *line)
 
 	read_word(username, line, sizeof(username));
 	id = g_find(username);
-	who_graph_line(id, 1); ndebug(TS_FMT " STOP %d", ts, id);
-	line_finish(line);
-	who_graph_line(id, 3); fputc('\n', stderr);
+	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+		graph_head(id, 1); fprintf(stderr, TS_FMT " STOP %d", ts, id);
+		line_finish(line);
+		if (sem_flags & PT_GRAPH) {
+			graph_head(id, 3); fputc('\n', stderr);
+		}
+	}
 	who_remove(gwhodb, id);
 
 	if (id != g_notfound) {
@@ -1307,9 +1329,13 @@ process_resume(time_t ts, char *line)
 
 	read_id(&id, line);
 	who_insert(gwhodb, id);
-	who_graph_line(id, 4); fputc('\n', stderr);
-	who_graph_line(id, 2); ndebug(TS_FMT " RESUME %d", ts, id);
-	line_finish(line);
+	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+		if (sem_flags & PT_GRAPH) {
+			graph_head(id, 4); fputc('\n', stderr);
+		}
+		graph_head(id, 2); fprintf(stderr, TS_FMT " RESUME %d", ts, id);
+		line_finish(line);
+	}
 	// TODO assert no interval for id at this ts
 	ti_insert(&pdbs, id, ts, tinf);
 }
@@ -1340,9 +1366,13 @@ process_pause(time_t ts, char *line)
 	unsigned id;
 
 	read_id(&id, line);
-	who_graph_line(id, 1); ndebug(TS_FMT " PAUSE %d", ts, id);
-	line_finish(line);
-	who_graph_line(id, 3); fputc('\n', stderr);
+	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+		graph_head(id, 1); fprintf(stderr, TS_FMT " PAUSE %d", ts, id);
+		line_finish(line);
+		if (sem_flags & PT_GRAPH) {
+			graph_head(id, 3); fputc('\n', stderr);
+		}
+	}
 	who_remove(gwhodb, id);
 	// TODO assert interval for id at this ts
 	ti_finish_last(&pdbs, id, ts);
@@ -1365,9 +1395,13 @@ process_start(time_t ts, char *line)
 	read_word(username, line, sizeof(username));
 	id = g_insert(username);
 	who_insert(gwhodb, id);
-	who_graph_line(id, 4); fputc('\n', stderr);
-	who_graph_line(id, 2); ndebug(TS_FMT " START %d", ts, id);
-	line_finish(line);
+	if (sem_flags & (PT_GRAPH | PT_DEBUG)) {
+		if (sem_flags & PT_GRAPH) {
+			graph_head(id, 4); fputc('\n', stderr);
+		}
+		graph_head(id, 2); fprintf(stderr, TS_FMT " START %d", ts, id);
+		line_finish(line);
+	}
 	ti_insert(&pdbs, id, ts, tinf);
 	ti_insert(&npdbs, id, ts, tinf);
 }
@@ -1439,6 +1473,15 @@ error:
 	err(EXIT_FAILURE, "Invalid format");
 }
 
+void
+usage(char *prog)
+{
+	fprintf(stderr, "Usage: %s [-gd]", prog);
+	fprintf(stderr, "    Options:\n");
+	fprintf(stderr, "        -g        display graph.\n");
+	fprintf(stderr, "        -d        display debug messages.\n");
+}
+
 /* The main function is the entry point to the application. In this case, it
  * is very basic. What it does is it reads each line that was fed in standard
  * input. This allows you to feed it any file you want by running:
@@ -1455,12 +1498,33 @@ error:
  * that was calculated, that is owed between the people (ge_show_all).
  */
 int
-main()
+main(int argc, char *argv[])
 {
 	char *line = NULL;
 	ssize_t linelen;
 	size_t linesize;
 	int ret;
+	char c;
+
+	while ((c = getopt(argc, argv, "gd")) != -1) {
+		switch (c) {
+		case 'd':
+			sem_flags |= PT_DEBUG;
+			break;
+
+		case 'g':
+			sem_flags |= PT_GRAPH;
+			break;
+			
+		default:
+			usage(*argv);
+			return 1;
+
+		case '?':
+			usage(*argv);
+			return 0;
+		}
+	}
 
 	dbs_init();
 
