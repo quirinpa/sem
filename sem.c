@@ -105,10 +105,10 @@ SLIST_HEAD(who_list, who);
 
 struct match {
 	struct ti ti;
-	TAILQ_ENTRY(match) entry;
+	STAILQ_ENTRY(match) entry;
 };
 
-TAILQ_HEAD(match_tailq, match);
+STAILQ_HEAD(match_stailq, match);
 
 struct split {
 	time_t min;
@@ -783,14 +783,14 @@ ti_finish_last(struct tidbs *dbs, unsigned id, time_t end)
 
 /* intersect an interval with an AVL of intervals */
 static inline unsigned
-ti_intersect(struct tidbs *dbs, struct match_tailq *matches, time_t min, time_t max)
+ti_intersect(struct tidbs *dbs, struct match_stailq *matches, time_t min, time_t max)
 {
 	struct ti tmp;
 	DBC *cur;
 	DBT key, data;
 	int ret = 0, dbflags = DB_SET_RANGE;
 
-	TAILQ_INIT(matches);
+	STAILQ_INIT(matches);
 	CBUG(dbs->max->cursor(dbs->max, NULL, &cur, 0));
 
 	memset(&key, 0, sizeof(DBT));
@@ -814,7 +814,7 @@ ti_intersect(struct tidbs *dbs, struct match_tailq *matches, time_t min, time_t 
 			// its a match
 			struct match *match = (struct match *) malloc(sizeof(struct match));
 			memcpy(&match->ti, &tmp, sizeof(tmp));
-			TAILQ_INSERT_TAIL(matches, match, entry);
+			STAILQ_INSERT_TAIL(matches, match, entry);
 			ret++;
 		}
 	}
@@ -825,7 +825,7 @@ ti_intersect(struct tidbs *dbs, struct match_tailq *matches, time_t min, time_t 
 
 /* intersect a point with an AVL of intervals */
 static inline unsigned
-ti_pintersect(struct tidbs *dbs, struct match_tailq *matches, time_t ts)
+ti_pintersect(struct tidbs *dbs, struct match_stailq *matches, time_t ts)
 {
 	return ti_intersect(dbs, matches, ts, ts);
 }
@@ -836,13 +836,13 @@ ti_pintersect(struct tidbs *dbs, struct match_tailq *matches, time_t ts)
 
 /* debugs an array of matches */
 static void
-matches_debug(struct match_tailq *matches)
+matches_debug(struct match_stailq *matches)
 {
 	struct match *match;
 	int i;
 	graph_head(-1, 0);
 	fprintf(stderr, "matches_debug");
-	TAILQ_FOREACH(match, matches, entry) {
+	STAILQ_FOREACH(match, matches, entry) {
 		fprintf(stderr, " (%s, " TS_FMT ", " TS_FMT ")", gi_get(match->ti.who), match->ti.min, match->ti.max);
 	}
 	fputc('\n', stderr);
@@ -850,11 +850,11 @@ matches_debug(struct match_tailq *matches)
 
 /* makes all provided matches lie within the provided interval [min, max] */
 static inline void
-matches_fix(struct match_tailq *matches, time_t min, time_t max)
+matches_fix(struct match_stailq *matches, time_t min, time_t max)
 {
 	struct match *match;
 
-	TAILQ_FOREACH(match, matches, entry) {
+	STAILQ_FOREACH(match, matches, entry) {
 		if (match->ti.min < min)
 			match->ti.min = min;
 		if (match->ti.max > max)
@@ -887,12 +887,12 @@ isplit_cmp(const void *ap, const void *bp)
 // assumes isplits is of size matches_l * 2
 /* creates intermediary isplits */
 static inline struct isplit *
-isplits_create(struct match_tailq *matches, size_t matches_l) {
+isplits_create(struct match_stailq *matches, size_t matches_l) {
 	struct isplit *isplits = (struct isplit *) malloc(sizeof(struct isplit) * matches_l * 2);
 	struct match *match;
 	unsigned i = 0;
 
-	TAILQ_FOREACH(match, matches, entry) {
+	STAILQ_FOREACH(match, matches, entry) {
 		struct isplit *isplit = isplits + i * 2;
 		isplit->ts = match->ti.min;
 		isplit->max = 0;
@@ -995,7 +995,7 @@ splits_debug(struct split_tailq *splits)
 /* From a list of matched intervals, this creates the tail queue of splits
  */
 static void
-splits_init(struct split_tailq *splits, struct match_tailq *matches, unsigned matches_l)
+splits_init(struct split_tailq *splits, struct match_stailq *matches, unsigned matches_l)
 {
 	struct isplit *isplits;
 	struct isplit *isplit;
@@ -1016,7 +1016,7 @@ splits_init(struct split_tailq *splits, struct match_tailq *matches, unsigned ma
 static void
 splits_get(struct split_tailq *splits, struct tidbs *dbs, time_t min, time_t max)
 {
-	struct match_tailq matches;
+	struct match_stailq matches;
 	unsigned matches_l = ti_intersect(dbs, &matches, min, max);
 	/* matches_debug(&matches); */
 	matches_fix(&matches, min, max);
@@ -1247,7 +1247,7 @@ process_pay(time_t ts, char *line)
 static inline void
 process_buy(time_t ts, char *line)
 {
-	struct match_tailq matches;
+	struct match_stailq matches;
 	struct match *match;
 	unsigned id;
 	int value, i, dvalue;
@@ -1268,14 +1268,13 @@ process_buy(time_t ts, char *line)
 		line_finish(line);
 	}
 
-	TAILQ_INIT(&matches);
 	unsigned matches_l = ti_pintersect(&npdbs, &matches, ts);
 	dvalue = value / matches_l + PAYER_TIP;
 
 	debug("  %d", dvalue);
 
 	// assert there are not multiple intervals with the same id?
-	TAILQ_FOREACH(match, &matches, entry) {
+	STAILQ_FOREACH(match, &matches, entry) {
 		if (match->ti.who != id)
 			ge_add(id, match->ti.who, dvalue);
 		ndebug(" %s", gi_get(match->ti.who));
