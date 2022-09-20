@@ -1559,10 +1559,12 @@ error:
 void
 usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-gd]", prog);
+	fprintf(stderr, "Usage: %s [-gdhm]", prog);
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -g        display graph.\n");
 	fprintf(stderr, "        -d        display debug messages.\n");
+	fprintf(stderr, "        -h        display dates in ISO 8601 format.\n");
+	fprintf(stderr, "        -m        display dates in both unix timestamp and ISO 8601 formats.\n");
 }
 
 /* The main function is the entry point to the application. In this case, it
