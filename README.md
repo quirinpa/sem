@@ -130,6 +130,5 @@ PAY <DATE> <PERSON_ID> <AMOUNT> <START_DATE> <END_DATE> [<BILL_TYPE_ID> <ENTITY>
 # Dependencies
 This program is dependant on libdb, on linux, it is also dependant on libbsd.
 
-# Algorithm
-I've commented the code (sem.c) very extensively in order to make it understandable to
-non-programmers. Please take a look at it if you like.
+# Payer's tip
+We check which people are present within a certain billing period, and split that billing period into sections with differing inhabitants. For each section in which a person is present, that person is going to pay a certain share of the cost of that section. Because we are using division, we always end up losing precision, for that reason, we use the number of cents, but we also have to add 1 cent to remedy the loss of this information. That is payer's tip.
