@@ -609,8 +609,11 @@ ge_add(unsigned id_from, unsigned id_to, int value)
 static inline void
 ge_show(unsigned from, unsigned to, int value)
 {
-	char *from_name = gi_get(from),
-	     *to_name = gi_get(to);
+	char *from_name_i = gi_get(from),
+	     from_name[USERNAME_MAX_LEN];
+	char *to_name;
+	memcpy(from_name, from_name_i, strlen(from_name_i) + 1);
+	to_name = gi_get(to);
 
 	if (value > 0)
 		printf("%s owes %s %.2f€\n", to_name, from_name,
@@ -1303,16 +1306,19 @@ process_transfer(time_t ts, char *line)
 	line += read_currency(&value, line);
 
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
+		char *id_from_si = gi_get(id_from);
+		char id_from_s[USERNAME_MAX_LEN];
+		memcpy(id_from_s, id_from_si, strlen(id_from_si) + 1);
 		graph_head(id_from, 5);
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s TRANSFER %s %s %d", ts, tss, gi_get(id_from), gi_get(id_to), value);
+				fprintf(stderr, TS_FMT ":%s TRANSFER %s %s %d", ts, tss, id_from_s, gi_get(id_to), value);
 			else
-				fprintf(stderr, "TRANSFER %s %s %s %d", tss, gi_get(id_from), gi_get(id_to), value);
+				fprintf(stderr, "TRANSFER %s %s %s %d", tss, id_from_s, gi_get(id_to), value);
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " TRANSFER %s %s %d", ts, gi_get(id_from), gi_get(id_to), value);
+			fprintf(stderr, TS_FMT " TRANSFER %s %s %d", ts, id_from_s, gi_get(id_to), value);
 		line_finish(line);
 	}
 
