@@ -1386,7 +1386,7 @@ process_resume(time_t ts, char *line)
 {
 	unsigned id;
 
-	read_id(&id, line);
+	line += read_id(&id, line);
 	who_insert(gwhodb, id);
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		if (pflags & PF_GRAPH) {
@@ -1433,7 +1433,7 @@ process_pause(time_t ts, char *line)
 {
 	unsigned id;
 
-	read_id(&id, line);
+	line += read_id(&id, line);
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		graph_head(id, 1);
 		if (pflags & PF_HUMAN) {
@@ -1469,7 +1469,7 @@ process_start(time_t ts, char *line)
 	char username[USERNAME_MAX_LEN];
 	unsigned id;
 
-	read_word(username, line, sizeof(username));
+	line += read_word(username, line, sizeof(username));
 	id = g_insert(username);
 	who_insert(gwhodb, id);
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
@@ -1515,7 +1515,7 @@ process_line(char *line)
 	char op_type_str[9], date_str[DATE_MAX_LEN];
 	time_t ts;
 
-	if (line[0] == '#')
+	if (line[0] == '#' || line[0] == '\n')
 		return;
 
 	/* debug("%s", line); */
