@@ -519,8 +519,8 @@ g_find(char *name)
  *
  * assumes strings of length 31 tops
  */
-static void
-gi_get(char * buffer, unsigned id)
+static char *
+gi_get(unsigned id)
 {
 	DBT key, pkey, data;
 
@@ -532,7 +532,7 @@ gi_get(char * buffer, unsigned id)
 	key.size = sizeof(id);;
 
 	CBUG(igdb->pget(igdb, NULL, &key, &pkey, &data, 0));
-	strlcpy(buffer, (char *) pkey.data, 31);
+	return pkey.data;
 }
 
 /******
@@ -609,10 +609,8 @@ ge_add(unsigned id_from, unsigned id_to, int value)
 static inline void
 ge_show(unsigned from, unsigned to, int value)
 {
-	char from_name[USERNAME_MAX_LEN], to_name[USERNAME_MAX_LEN];
-
-	gi_get(from_name, from);
-	gi_get(to_name, to);
+	char *from_name = gi_get(from),
+	     *to_name = gi_get(to);
 
 	if (value > 0)
 		printf("%s owes %s %.2f€\n", to_name, from_name,
@@ -845,7 +843,7 @@ matches_debug(struct match_tailq *matches)
 	graph_head(-1, 0);
 	fprintf(stderr, "matches_debug");
 	TAILQ_FOREACH(match, matches, entry) {
-		fprintf(stderr, " (%u, " TS_FMT ", " TS_FMT ")", match->ti.who, match->ti.min, match->ti.max);
+		fprintf(stderr, " (%s, " TS_FMT ", " TS_FMT ")", gi_get(match->ti.who), match->ti.min, match->ti.max);
 	}
 	fputc('\n', stderr);
 }
@@ -918,7 +916,7 @@ isplits_debug(struct isplit *isplits, unsigned matches_l) {
 	fprintf(stderr, "isplits_debug ");
 	for (i = 0; i < matches_l * 2; i++) {
 		struct isplit *isplit = isplits + i;
-		fprintf(stderr, "(" TS_FMT ", %d, %u) ", isplit->ts, isplit->max, isplit->who);
+		fprintf(stderr, "(" TS_FMT ", %d, %s) ", isplit->ts, isplit->max, gi_get(isplit->who));
 	}
 	fputc('\n', stderr);
 }
@@ -987,7 +985,7 @@ splits_debug(struct split_tailq *splits)
 		fprintf(stderr, "(" TS_FMT ", " TS_FMT ", { ", split->min, split->max);
 
 		SLIST_FOREACH_SAFE(who, &split->who_list, entry, tmp)
-			fprintf(stderr, "%u ", who->who);
+			fprintf(stderr, "%s ", gi_get(who->who));
 
 		fprintf(stderr, "}) ");
 	}
@@ -1117,7 +1115,7 @@ splits_pay(
 		SLIST_FOREACH(who, &split->who_list, entry) {
 			if (who->who != payer)
 				ge_add(payer, who->who, cost);
-			ndebug(" %d", who->who);
+			ndebug(" %s", gi_get(who->who));
 		}
 		ndebug("\n");
 	}
@@ -1215,14 +1213,14 @@ process_pay(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts), *mins = printtime(min), *maxs = printtime(max);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s PAY %d %u " TS_FMT ":%s " TS_FMT ":%s", ts, tss, id, value, min, mins, max, maxs);
+				fprintf(stderr, TS_FMT ":%s PAY %s %d " TS_FMT ":%s " TS_FMT ":%s", ts, tss, gi_get(id), value, min, mins, max, maxs);
 			else
-				fprintf(stderr, "PAY %s %d %u %s %s", tss, id, value, mins, maxs);
+				fprintf(stderr, "PAY %s %s %d %s %s", tss, gi_get(id), value, mins, maxs);
 			free(tss);
 			free(mins);
 			free(maxs);
 		} else
-			fprintf(stderr, TS_FMT " PAY %d %u " TS_FMT " " TS_FMT "", ts, id, value, min, max);
+			fprintf(stderr, TS_FMT " PAY %s %d " TS_FMT " " TS_FMT "", ts, gi_get(id), value, min, max);
 		line_finish(line);
 	}
 
@@ -1261,12 +1259,12 @@ process_buy(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s BUY %d %d", ts, tss, id, value);
+				fprintf(stderr, TS_FMT ":%s BUY %s %d", ts, tss, gi_get(id), value);
 			else
-				fprintf(stderr, "BUY %s %d %d", tss, id, value);
+				fprintf(stderr, "BUY %s %s %d", tss, gi_get(id), value);
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " BUY %d %d", ts, id, value);
+			fprintf(stderr, TS_FMT " BUY %s %d", ts, gi_get(id), value);
 		line_finish(line);
 	}
 
@@ -1280,7 +1278,7 @@ process_buy(time_t ts, char *line)
 	TAILQ_FOREACH(match, &matches, entry) {
 		if (match->ti.who != id)
 			ge_add(id, match->ti.who, dvalue);
-		ndebug(" %d", match->ti.who);
+		ndebug(" %s", gi_get(match->ti.who));
 	}
 
 	ndebug("\n");
@@ -1310,12 +1308,12 @@ process_transfer(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s TRANSFER %d %d %d", ts, tss, id_from, id_to, value);
+				fprintf(stderr, TS_FMT ":%s TRANSFER %s %s %d", ts, tss, gi_get(id_from), gi_get(id_to), value);
 			else
-				fprintf(stderr, "TRANSFER %s %d %d %d", tss, id_from, id_to, value);
+				fprintf(stderr, "TRANSFER %s %s %s %d", tss, gi_get(id_from), gi_get(id_to), value);
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " TRANSFER %d %d %d", ts, id_from, id_to, value);
+			fprintf(stderr, TS_FMT " TRANSFER %s %s %d", ts, gi_get(id_from), gi_get(id_to), value);
 		line_finish(line);
 	}
 
@@ -1346,12 +1344,12 @@ process_stop(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s STOP %d", ts, tss, id);
+				fprintf(stderr, TS_FMT ":%s STOP %s", ts, tss, gi_get(id));
 			else
-				fprintf(stderr, "STOP %s %d", tss, id);
+				fprintf(stderr, "STOP %s %s", tss, gi_get(id));
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " STOP %d", ts, id);
+			fprintf(stderr, TS_FMT " STOP %s", ts, gi_get(id));
 		line_finish(line);
 		if (pflags & PF_GRAPH) {
 			graph_head(id, 3); fputc('\n', stderr);
@@ -1393,12 +1391,12 @@ process_resume(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s RESUME %d", ts, tss, id);
+				fprintf(stderr, TS_FMT ":%s RESUME %s", ts, tss, gi_get(id));
 			else
-				fprintf(stderr, "RESUME %s %d", tss, id);
+				fprintf(stderr, "RESUME %s %s", tss, gi_get(id));
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " RESUME %d", ts, id);
+			fprintf(stderr, TS_FMT " RESUME %s", ts, gi_get(id));
 		line_finish(line);
 	}
 	// TODO assert no interval for id at this ts
@@ -1436,12 +1434,12 @@ process_pause(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s PAUSE %d", ts, tss, id);
+				fprintf(stderr, TS_FMT ":%s PAUSE %s", ts, tss, gi_get(id));
 			else
-				fprintf(stderr, "PAUSE %s %d", tss, id);
+				fprintf(stderr, "PAUSE %s %s", tss, gi_get(id));
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " PAUSE %d", ts, id);
+			fprintf(stderr, TS_FMT " PAUSE %s", ts, gi_get(id));
 		line_finish(line);
 		if (pflags & PF_GRAPH) {
 			graph_head(id, 3); fputc('\n', stderr);
@@ -1477,12 +1475,12 @@ process_start(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s START %d", ts, tss, id);
+				fprintf(stderr, TS_FMT ":%s START %s", ts, tss, gi_get(id));
 			else
-				fprintf(stderr, "START %s %d", tss, id);
+				fprintf(stderr, "START %s %s", tss, gi_get(id));
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " START %d", ts, id);
+			fprintf(stderr, TS_FMT " START %s", ts, gi_get(id));
 		line_finish(line);
 	}
 	ti_insert(&pdbs, id, ts, tinf);
