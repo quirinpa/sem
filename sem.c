@@ -1256,7 +1256,7 @@ process_buy(time_t ts, char *line)
 	int value, i, dvalue;
 
 	line += read_id(&id, line);
-	read_currency(&value, line);
+	line += read_currency(&value, line);
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		graph_head(id, 5);
 		if (pflags & PF_HUMAN) {
