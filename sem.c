@@ -94,10 +94,7 @@ struct isplit {
 	time_t ts;
 	int max;
 	unsigned who;
-	TAILQ_ENTRY(isplit) entry;
 };
-
-TAILQ_HEAD(isplit_tailq, isplit);
 
 struct who {
 	unsigned who;
