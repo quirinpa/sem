@@ -87,8 +87,8 @@ PAY - Bill is paid
 Lines should always be appended at the end of the file. It is assumed that they are ordered by the first DATE expressed in the line.
 
 
-All dates should be in UTC ISO-8601 format, like this: "2022-03-21T08:40:23Z".
-Optionally, we can have a date only, like "2022-02-01", this is assumed as "2022-01-31T24:00:00Z".
+All dates should be in UTC ISO-8601 format, like this: "2022-03-21T08:40:23".
+Optionally, we can have a date only, like "2022-02-01", this is assumed as "2022-01-31T24:00:00" or "2022-02-01T00:00:00".
 
 
 Comments start with "#". It is assumed that the required items in the line are present before the "#", except in cases where there is a "#" at the start of a line.
