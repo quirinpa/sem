@@ -328,13 +328,13 @@ read_id(unsigned *id, char *line)
 
 /* read currency value and convert it to int */
 static size_t
-read_currency(int *target, char *line)
+read_currency(long *target, char *line)
 {
 	char buf[CURRENCY_MAX_LEN];
 	size_t len;
 
 	len = read_word(buf, line, sizeof(buf));
-	*target = (int) (strtof(buf, NULL) * 100.0f);
+	*target = (long) (strtof(buf, NULL) * 100.0f);
 
 	return len;
 }
@@ -540,12 +540,12 @@ gi_get(unsigned id)
  ******/
 
 /* get debt between people */
-static int
+static long
 ge_get(unsigned id0, unsigned id1)
 {
 	unsigned ids[2];
 	DBT key, data;
-	int ret;
+	long ret;
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -566,17 +566,17 @@ ge_get(unsigned id0, unsigned id1)
 		return 0;
 
 	CBUG(ret);
-	ret = * (int *) data.data;
+	ret = * (long *) data.data;
 	return id0 > id1 ? -ret : ret;
 }
 
 /* add debt between people */
 static void
-ge_add(unsigned id_from, unsigned id_to, int value)
+ge_add(unsigned id_from, unsigned id_to, long value)
 {
 	unsigned ids[2];
 	DBT key, data;
-	int cvalue;
+	long cvalue;
 
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
@@ -607,7 +607,7 @@ ge_add(unsigned id_from, unsigned id_to, int value)
 
 /* show debt between a pair of two people */
 static inline void
-ge_show(unsigned from, unsigned to, int value)
+ge_show(unsigned from, unsigned to, long value)
 {
 	char *from_name_i = gi_get(from),
 	     from_name[USERNAME_MAX_LEN];
@@ -637,7 +637,7 @@ ge_show_all()
 	memset(&key, 0, sizeof(DBT));
 
 	while (1) {
-		int value;
+		long value;
 
 		ret = cur->get(cur, &key, &data, DB_NEXT);
 
@@ -645,7 +645,7 @@ ge_show_all()
 			return;
 
 		CBUG(ret);
-		value = * (unsigned *) data.data;
+		value = * (unsigned long *) data.data;
 		if (value)
 			ge_show(* (unsigned *) key.data,
 					((unsigned *) key.data)[1], value);
@@ -748,7 +748,7 @@ ti_finish_last(struct tidbs *dbs, unsigned id, time_t end)
 	DBT key, data;
 	DBT pkey;
 	DBC *cur;
-	int res, dbflags = DB_SET;
+	int dbflags = DB_SET;
 
 	CBUG(dbs->id->cursor(dbs->id, NULL, &cur, 0));
 
@@ -1087,7 +1087,7 @@ splits_fill(struct split_tailq *splits, time_t min, time_t max)
 	}
 }
 
-static inline int
+static inline long
 pay(long long divident, long long divisor) {
 	return (divident % divisor ? PAYER_TIP : 0)
 		+ divident / divisor;
@@ -1099,7 +1099,7 @@ pay(long long divident, long long divisor) {
 static inline void
 splits_pay(
 		struct split_tailq *splits, unsigned payer,
-		int value, time_t bill_interval)
+		long value, time_t bill_interval)
 {
 	struct split *split;
 
@@ -1209,7 +1209,7 @@ process_pay(time_t ts, char *line)
 {
 	struct split_tailq splits;
 	unsigned id;
-	int value;
+	long value;
 	time_t min, max;
 
 	line += read_id(&id, line);
@@ -1221,14 +1221,14 @@ process_pay(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts), *mins = printtime(min), *maxs = printtime(max);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s PAY %s %d " TS_FMT ":%s " TS_FMT ":%s", ts, tss, gi_get(id), value, min, mins, max, maxs);
+				fprintf(stderr, TS_FMT ":%s PAY %s %ld " TS_FMT ":%s " TS_FMT ":%s", ts, tss, gi_get(id), value, min, mins, max, maxs);
 			else
-				fprintf(stderr, "PAY %s %s %d %s %s", tss, gi_get(id), value, mins, maxs);
+				fprintf(stderr, "PAY %s %s %ld %s %s", tss, gi_get(id), value, mins, maxs);
 			free(tss);
 			free(mins);
 			free(maxs);
 		} else
-			fprintf(stderr, TS_FMT " PAY %s %d " TS_FMT " " TS_FMT "", ts, gi_get(id), value, min, max);
+			fprintf(stderr, TS_FMT " PAY %s %ld " TS_FMT " " TS_FMT "", ts, gi_get(id), value, min, max);
 		line_finish(line);
 	}
 
@@ -1258,7 +1258,8 @@ process_buy(time_t ts, char *line)
 	struct match_stailq matches;
 	struct match *match;
 	unsigned id;
-	int value, i, dvalue;
+	int i;
+	long value, dvalue;
 
 	line += read_id(&id, line);
 	line += read_currency(&value, line);
@@ -1267,19 +1268,19 @@ process_buy(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s BUY %s %d", ts, tss, gi_get(id), value);
+				fprintf(stderr, TS_FMT ":%s BUY %s %ld", ts, tss, gi_get(id), value);
 			else
-				fprintf(stderr, "BUY %s %s %d", tss, gi_get(id), value);
+				fprintf(stderr, "BUY %s %s %ld", tss, gi_get(id), value);
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " BUY %s %d", ts, gi_get(id), value);
+			fprintf(stderr, TS_FMT " BUY %s %ld", ts, gi_get(id), value);
 		line_finish(line);
 	}
 
 	unsigned matches_l = ti_pintersect(&npdbs, &matches, ts);
 	dvalue = pay(value, matches_l);
 
-	debug("  %d", dvalue);
+	debug("  %ld", dvalue);
 
 	// assert there are not multiple intervals with the same id?
 	STAILQ_FOREACH(match, &matches, entry) {
@@ -1304,7 +1305,7 @@ static inline void
 process_transfer(time_t ts, char *line)
 {
 	unsigned id_from, id_to;
-	int value;
+	long value;
 
 	line += read_id(&id_from, line);
 	line += read_id(&id_to, line);
@@ -1318,12 +1319,12 @@ process_transfer(time_t ts, char *line)
 		if (pflags & PF_HUMAN) {
 			char *tss = printtime(ts);
 			if (pflags & PF_MACHINE)
-				fprintf(stderr, TS_FMT ":%s TRANSFER %s %s %d", ts, tss, id_from_s, gi_get(id_to), value);
+				fprintf(stderr, TS_FMT ":%s TRANSFER %s %s %ld", ts, tss, id_from_s, gi_get(id_to), value);
 			else
-				fprintf(stderr, "TRANSFER %s %s %s %d", tss, id_from_s, gi_get(id_to), value);
+				fprintf(stderr, "TRANSFER %s %s %s %ld", tss, id_from_s, gi_get(id_to), value);
 			free(tss);
 		} else
-			fprintf(stderr, TS_FMT " TRANSFER %s %s %d", ts, id_from_s, gi_get(id_to), value);
+			fprintf(stderr, TS_FMT " TRANSFER %s %s %ld", ts, id_from_s, gi_get(id_to), value);
 		line_finish(line);
 	}
 
