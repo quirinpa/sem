@@ -124,8 +124,6 @@ struct split {
 
 TAILQ_HEAD(split_tailq, split);
 
-struct who_list who;
-
 struct tidbs {
 	DB *ti; // keys and values are struct ti
 	DB *max; // secondary DB (BTREE) with interval max as key
@@ -869,6 +867,17 @@ matches_fix(struct match_stailq *matches, time_t min, time_t max)
 	}
 }
 
+static void
+matches_free(struct match_stailq *matches)
+{
+	struct match *match, *match_tmp;
+
+	STAILQ_FOREACH_SAFE(match, matches, entry, match_tmp) {
+		STAILQ_REMOVE_HEAD(matches, entry);
+		free(match);
+	}
+}
+
 /******
  * isplit related functions
  ******/
@@ -1028,7 +1037,8 @@ splits_get(struct split_tailq *splits, struct tidbs *dbs, time_t min, time_t max
 	/* matches_debug(&matches); */
 	matches_fix(&matches, min, max);
 	/* matches_debug(&matches); */
-	return splits_init(splits, &matches, matches_l);
+	splits_init(splits, &matches, matches_l);
+	matches_free(&matches);
 }
 
 /* Inserts a tail queue of splits within another, before the element provided
@@ -1148,6 +1158,7 @@ splits_free(struct split_tailq *splits)
 		}
 
 		TAILQ_REMOVE(splits, split, entry);
+		free(split);
 	}
 }
 
@@ -1240,7 +1251,7 @@ process_pay(time_t ts, char *line)
 	splits_fill(&splits, min, max);
 	/* splits_debug(&splits); */
 	splits_pay(&splits, id, value, max - min);
-	/* splits_free(&splits); */
+	splits_free(&splits);
 }
 
 /* This function is for handling lines in the format:
