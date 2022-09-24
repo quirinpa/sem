@@ -1087,6 +1087,12 @@ splits_fill(struct split_tailq *splits, time_t min, time_t max)
 	}
 }
 
+static inline int
+pay(long long divident, long long divisor) {
+	return (divident % divisor ? PAYER_TIP : 0)
+		+ divident / divisor;
+}
+
 /* adds debt for each person of the tail queue of splits to the payer of the
  * bill
  */
@@ -1100,8 +1106,7 @@ splits_pay(
 	TAILQ_FOREACH(split, splits, entry) {
 		struct who *who;
 		time_t interval = split->max - split->min;
-		int cost = PAYER_TIP + interval * value
-			/ (split->who_list_l * bill_interval);
+		int cost = pay(interval * value, split->who_list_l * bill_interval);
 		if (pflags & PF_DEBUG) {
 			graph_head(-1, 0);
 			if (pflags & PF_HUMAN) {
@@ -1272,7 +1277,7 @@ process_buy(time_t ts, char *line)
 	}
 
 	unsigned matches_l = ti_pintersect(&npdbs, &matches, ts);
-	dvalue = value / matches_l + PAYER_TIP;
+	dvalue = pay(value, matches_l);
 
 	debug("  %d", dvalue);
 
