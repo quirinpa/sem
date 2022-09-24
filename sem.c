@@ -49,10 +49,14 @@
 #include <string.h>
 #ifdef __OpenBSD__
 #define TS_FMT "%lld"
+#define TS_MIN LLONG_MIN
+#define TS_MAX LLONG_MAX
 #include <db4/db.h>
 #include <sys/queue.h>
 #else
 #define TS_FMT "%ld"
+#define TS_MIN LONG_MIN
+#define TS_MAX LONG_MAX
 #ifdef ALPINE
 #include <stdint.h>
 #include <db4/db.h>
@@ -135,8 +139,8 @@ enum pflags {
 	PF_MACHINE = 8,
 };
 
-const time_t mtinf = (time_t) LONG_MIN; // minus infinite
-const time_t tinf = (time_t) LONG_MAX; // infinite
+const time_t mtinf = (time_t) TS_MIN; // minus infinite
+const time_t tinf = (time_t) TS_MAX; // infinite
 
 DB *gdb = NULL; // graph primary DB (keys are usernames, values are user ids)
 DB *igdb = NULL; // secondary DB to lookup usernames via ids
