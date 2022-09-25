@@ -254,7 +254,7 @@ sscantime(char *buf)
 	struct tm tm;
 
 	memset(&tm, 0, sizeof(tm));
-	aux = strptime(buf, "%Y-%m-%dTT%H:%M:%S", &tm);
+	aux = strptime(buf, "%Y-%m-%dT%H:%M:%S", &tm);
 	if (!aux && !strptime(buf, "%Y-%m-%d", &tm))
 		err(EXIT_FAILURE, "Invalid date");
 
@@ -1165,9 +1165,12 @@ splits_free(struct split_tailq *splits)
 static inline void
 line_finish(char *line)
 {
-	if (*line && *line != '\n')
-		fprintf(stderr, " #%s", line);
-	else
+	if (*line && *line != '\n') {
+		if (*(line + 1) == '#')
+			fprintf(stderr, "%s", line);
+		else
+			fprintf(stderr, " #%s", line);
+	} else
 		fputc('\n', stderr);
 }
 
@@ -1363,7 +1366,7 @@ process_stop(time_t ts, char *line)
 	char username[USERNAME_MAX_LEN];
 	unsigned id;
 
-	read_word(username, line, sizeof(username));
+	line += read_word(username, line, sizeof(username));
 	id = g_find(username);
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		graph_head(id, 1);
@@ -1580,7 +1583,7 @@ error:
 	err(EXIT_FAILURE, "Invalid format");
 }
 
-void
+static inline void
 usage(char *prog)
 {
 	fprintf(stderr, "Usage: %s [-gdhm]", prog);
