@@ -41,16 +41,11 @@
 
 #define _BSD_SOURCE
 #include <ctype.h>
-#include <err.h>
-#include <limits.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef __OpenBSD__
 #define TS_FMT "%lld"
-#define TS_MIN LLONG_MIN
-#define TS_MAX LLONG_MAX
 #include <db4/db.h>
 #include <sys/queue.h>
 #else
@@ -65,7 +60,7 @@
 #endif
 #include <bsd/sys/queue.h>
 #endif
-#include <time.h>
+#include "common.h"
 
 #define ndebug(fmt, ...) \
 	if (pflags & PF_DEBUG) \
@@ -81,12 +76,8 @@
 		fprintf(stderr, fmt, ##__VA_ARGS__); \
 	}
 
-#define CBUG(c) if (c) { fprintf(stderr, "CBUG! " #c " %s:%s:%d\n", \
-		__FILE__, __FUNCTION__, __LINE__); raise(SIGINT); }
-
 #define PAYER_TIP 1
 #define USERNAME_MAX_LEN 32
-#define DATE_MAX_LEN 20
 #define CURRENCY_MAX_LEN 32
 
 struct ti {
@@ -135,10 +126,9 @@ enum pflags {
 	PF_DEBUG = 2,
 	PF_HUMAN = 4,
 	PF_MACHINE = 8,
+	PF_PRESENT = 16,
+	PF_QUIET = 32,
 };
-
-const time_t mtinf = (time_t) TS_MIN; // minus infinite
-const time_t tinf = (time_t) TS_MAX; // infinite
 
 DB *gdb = NULL; // graph primary DB (keys are usernames, values are user ids)
 DB *igdb = NULL; // secondary DB to lookup usernames via ids
@@ -148,6 +138,7 @@ DB *gedb = NULL; // graph edge DB to lookup debt between participants (ids as ke
 DB *whodb = NULL; // temporary DB for process_pay(). see ti_split()
 
 DB *gwhodb = NULL; // DB for displaying timeline graph
+DB *gnpwhodb = NULL; // similar to the above except excludes pauses. Used for -p
 
 static DB_ENV *dbe = NULL;
 
@@ -246,71 +237,9 @@ who_graph_line(unsigned who_does, unsigned flags) {
 	fputc(' ', stderr);
 }
 
-/* get timestamp from ISO-8601 date string */
-static time_t
-sscantime(char *buf)
-{
-	char *aux;
-	struct tm tm;
-
-	memset(&tm, 0, sizeof(tm));
-	aux = strptime(buf, "%Y-%m-%dT%H:%M:%S", &tm);
-	if (!aux && !strptime(buf, "%Y-%m-%d", &tm))
-		err(EXIT_FAILURE, "Invalid date");
-
-	tm.tm_isdst = -1;
-	return mktime(&tm);
-}
-
-/* get ISO-8601 date string from timestamp
- *
- * only use this for debug (memory leak), or free pointer
- */
-static char *
-printtime(time_t ts)
-{
-	char *buf;
-	struct tm tm;
-
-	if (ts == mtinf)
-		return "-inf";
-
-	if (ts == tinf)
-		return "inf";
-
-	buf = (char *) malloc(DATE_MAX_LEN);
-	tm = *localtime(&ts);
-
-	if (tm.tm_sec || tm.tm_min || tm.tm_hour)
-		strftime(buf, DATE_MAX_LEN, "%FT%T", &tm);
-	else
-		strftime(buf, DATE_MAX_LEN, "%F", &tm);
-
-	return buf;
-}
-
 /******
  * read functions
  ******/
-
-/* read a word */
-static size_t
-read_word(char *buf, char *input, size_t max_len)
-{
-	size_t ret = 0;
-
-	for (; *input && isspace(*input); input++, ret++);
-
-	for (; *input && !isspace(*input) && ret < max_len;
-		input++, buf++, ret++)
-
-		*buf = *input;
-
-	CBUG(ret > max_len); // FIXME?
-	*buf = '\0';
-
-	return ret;
-}
 
 static unsigned g_find(char *name);
 
@@ -339,19 +268,6 @@ read_currency(long *target, char *line)
 	*target = (long) (strtof(buf, NULL) * 100.0f);
 
 	return len;
-}
-
-/* read date in iso 8601 and convert it to a unix timestamp */
-static size_t
-read_ts(time_t *target, char *line)
-{
-	char date_str[DATE_MAX_LEN];
-	size_t ret;
-
-	ret = read_word(date_str, line, sizeof(date_str));
-	*target = sscantime(date_str);
-
-	return ret;
 }
 
 /******
@@ -464,7 +380,11 @@ dbs_init()
 		|| gdb->open(whodb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664)
 
 		|| db_create(&gwhodb, dbe, 0)
-		|| gdb->open(gwhodb, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664);
+		|| gdb->open(gwhodb, NULL, NULL, NULL, DB_BTREE, DB_CREATE, 0664)
+
+		|| db_create(&gnpwhodb, dbe, 0)
+		|| gdb->open(gnpwhodb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0664);
+
 	CBUG(ret);
 }
 
@@ -714,6 +634,44 @@ who_remove(DB *whodb, unsigned who) {
 	key.size = sizeof(who);
 
 	CBUG(whodb->del(whodb, NULL, &key, 0));
+}
+
+static int
+who_get(DB *whodb, unsigned who) {
+	DBT key, data;
+
+	memset(&key, 0, sizeof(DBT));
+	memset(&data, 0, sizeof(DBT));
+
+	key.data = &who;
+	key.size = sizeof(who);
+
+	switch (whodb->get(whodb, NULL, &key, &data, 0)) {
+	case 0:
+		return 1;
+	case DB_NOTFOUND:
+		return 0;
+	default:
+		CBUG(1);
+		return -1;
+	}
+}
+
+static inline void
+who_present() {
+	struct who_list whol;
+	struct who *who;
+	int len, did_id = 0;
+
+	SLIST_INIT(&whol);
+	len = who_list(gnpwhodb , &whol);
+
+	SLIST_FOREACH(who, &whol, entry)
+		printf("%c %s\n",
+		       who_get(gwhodb, who->who) ? 'P' : 'A',
+		       gi_get(who->who));
+
+	// TODO free list?
 }
 
 /******
@@ -1385,6 +1343,7 @@ process_stop(time_t ts, char *line)
 		}
 	}
 	who_remove(gwhodb, id);
+	who_remove(gnpwhodb, id);
 
 	if (id != g_notfound) {
 		ti_finish_last(&pdbs, id, ts);
@@ -1411,6 +1370,8 @@ process_resume(time_t ts, char *line)
 	unsigned id;
 
 	line += read_id(&id, line);
+	CBUG(who_get(gwhodb, id));
+	CBUG(!who_get(gnpwhodb, id));
 	who_insert(gwhodb, id);
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		if (pflags & PF_GRAPH) {
@@ -1496,6 +1457,7 @@ process_start(time_t ts, char *line)
 	line += read_word(username, line, sizeof(username));
 	id = g_insert(username);
 	who_insert(gwhodb, id);
+	who_insert(gnpwhodb, id);
 	if (pflags & (PF_GRAPH | PF_DEBUG)) {
 		if (pflags & PF_GRAPH) {
 			graph_head(id, 4); fputc('\n', stderr);
@@ -1618,7 +1580,7 @@ main(int argc, char *argv[])
 	int ret;
 	char c;
 
-	while ((c = getopt(argc, argv, "gdhm")) != -1) {
+	while ((c = getopt(argc, argv, "gdhmpq")) != -1) {
 		switch (c) {
 		case 'd':
 			pflags |= PF_DEBUG;
@@ -1634,6 +1596,14 @@ main(int argc, char *argv[])
 
 		case 'm':
 			pflags |= PF_MACHINE | PF_HUMAN;
+			break;
+
+		case 'p':
+			pflags |= PF_PRESENT;
+			break;
+
+		case 'q':
+			pflags |= PF_QUIET;
 			break;
 			
 		default:
@@ -1653,7 +1623,13 @@ main(int argc, char *argv[])
 
 	free(line);
 
-	ge_show_all();
+	if (pflags & PF_QUIET)
+		return EXIT_SUCCESS;
+
+	if (pflags & PF_PRESENT)
+		who_present();
+	else
+		ge_show_all();
 
 	return EXIT_SUCCESS;
 }
