@@ -46,6 +46,9 @@ main(int argc, char *argv[])
 	while ((linelen = getline(&line, &linesize, stdin)) >= 0)
 		process_line(line);
 
+	if (!finished)
+		printf("%s\n", insert);
+
 	free(line);
 
 	return EXIT_SUCCESS;
