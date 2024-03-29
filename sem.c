@@ -39,19 +39,16 @@
  * Happy reading!
  */
 
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef __OpenBSD__
-#define TS_FMT "%lld"
 #include <db4/db.h>
 #include <sys/queue.h>
 #else
-#define TS_FMT "%ld"
-#define TS_MIN LONG_MIN
-#define TS_MAX LONG_MAX
 #ifdef ALPINE
 #include <stdint.h>
 #include <db4/db.h>
@@ -624,7 +621,7 @@ who_insert(DB *whodb, unsigned who)
 }
 
 /* remove a person from the db of present people */
-static void
+static int
 who_remove(DB *whodb, unsigned who) {
 	DBT key;
 

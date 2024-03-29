@@ -9,8 +9,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __OpenBSD__
+#define TS_FMT "%lld"
 #define TS_MIN LLONG_MIN
 #define TS_MAX LLONG_MAX
+#else
+#define TS_FMT "%ld"
+#define TS_MIN LONG_MIN
+#define TS_MAX LONG_MAX
+#endif
 
 #define CBUG(c) if (c) { fprintf(stderr, "CBUG! " #c " %s:%s:%d\n", \
 		__FILE__, __FUNCTION__, __LINE__); raise(SIGINT); }
