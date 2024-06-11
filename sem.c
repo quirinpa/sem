@@ -630,7 +630,12 @@ who_remove(DB *whodb, unsigned who) {
 	key.data = &who;
 	key.size = sizeof(who);
 
-	CBUG(whodb->del(whodb, NULL, &key, 0));
+	int ret = whodb->del(whodb, NULL, &key, 0);
+	if (ret == DB_NOTFOUND)
+		return 1;
+
+	CBUG(ret);
+	return 0;
 }
 
 static int
@@ -1339,12 +1344,14 @@ process_stop(time_t ts, char *line)
 			graph_head(id, 3); fputc('\n', stderr);
 		}
 	}
-	who_remove(gwhodb, id);
-	who_remove(gnpwhodb, id);
+	int remp = who_remove(gwhodb, id);
+	int remnp = who_remove(gnpwhodb, id);
 
 	if (id != g_notfound) {
-		ti_finish_last(&pdbs, id, ts);
-		ti_finish_last(&npdbs, id, ts);
+		if (!remp)
+			ti_finish_last(&pdbs, id, ts);
+		if (!remnp)
+			ti_finish_last(&npdbs, id, ts);
 	} else {
 		id = g_insert(username);
 		ti_insert(&pdbs, id, mtinf, ts);
