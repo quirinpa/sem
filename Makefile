@@ -1,4 +1,4 @@
-.PHONY: all run clean
+.PHONY: all run clean list
 
 UNAME != uname
 LDFLAGS-Linux := -lbsd
@@ -25,3 +25,6 @@ run: sem
 
 clean:
 	rm sem
+
+list:
+	@echo ./sem
