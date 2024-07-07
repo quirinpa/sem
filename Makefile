@@ -1,4 +1,6 @@
-.PHONY: all run clean list
+.PHONY: all run clean install
+
+PREFIX ?= usr
 
 UNAME != uname
 LDFLAGS-Linux := -lbsd
@@ -24,7 +26,10 @@ run: sem
 	cat data.txt | ./sem
 
 clean:
-	rm sem
+	rm sem || true
 
-list:
-	@echo ./sem
+$(DESTDIR)$(PREFIX)/bin/sem: sem
+	install -m 755 sem $@
+	${INSTALL_DEP} ${@:${DESTDIR}%=%}
+
+install: ${DESTDIR}${PREFIX}/bin/sem
