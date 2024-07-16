@@ -1,10 +1,12 @@
 .PHONY: all run clean install
 
+DESTDIR ?= ../../../../
+INSTALL_DEP ?= ${DESTDIR}make_dep.sh
 PREFIX ?= usr
 
 UNAME != uname
 LDFLAGS-Linux := -lbsd
-LD=gcc
+LD=${CC}
 
 LIBDB_PATH ?= /usr/lib
 CFLAGS-Alpine := -DALPINE
@@ -15,11 +17,11 @@ LDFLAGS += ${LDFLAGS-${UNAME}} -L/usr/local/lib -L/usr/lib -ldb
 all: sem sem-echo
 
 sem: sem.c
-	${LD} -o $@ $^ ${LDFLAGS}
+	${LD} ${CFLAGS} -o $@ sem.c ${LDFLAGS}
 	# ${LINK.c} -g -o $@ sem.c ${LIBFILES-${UNAME}}
 
 sem-echo: sem-echo.c
-	${LD} -o $@ $^ ${LDFLAGS}
+	${LD} ${CFLAGS} -o $@ sem-echo ${LDFLAGS}
 	# ${LINK.c} -g -o $@ sem-echo.c ${LIBFILES-${UNAME}}
 
 run: sem

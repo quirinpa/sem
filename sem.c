@@ -40,7 +40,6 @@
  */
 
 #define _DEFAULT_SOURCE
-#define _XOPEN_SOURCE
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
