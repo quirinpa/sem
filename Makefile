@@ -18,11 +18,9 @@ all: sem sem-echo
 
 sem: sem.c
 	${LD} ${CFLAGS} -o $@ sem.c ${LDFLAGS}
-	# ${LINK.c} -g -o $@ sem.c ${LIBFILES-${UNAME}}
 
 sem-echo: sem-echo.c
-	${LD} ${CFLAGS} -o $@ sem-echo ${LDFLAGS}
-	# ${LINK.c} -g -o $@ sem-echo.c ${LIBFILES-${UNAME}}
+	${LD} ${CFLAGS} -o $@ sem-echo.c ${LDFLAGS}
 
 run: sem
 	cat data.txt | ./sem
