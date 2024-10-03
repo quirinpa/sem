@@ -6,21 +6,18 @@ PREFIX ?= usr
 
 UNAME != uname
 LDFLAGS-Linux := -lbsd
-LD=${CC}
+LDFLAGS += -lit -lqhash -ldb ${LDFLAGS-${UNAME}}
 
-LIBDB_PATH ?= /usr/lib
 CFLAGS-Alpine := -DALPINE
-
-CFLAGS += ${CFLAGS-${DISTRO}} -I/usr/local/include -I/usr/include
-LDFLAGS += ${LDFLAGS-${UNAME}} -L/usr/local/lib -L/usr/lib -ldb
+CFLAGS += -g ${CFLAGS-${DISTRO}}
 
 all: sem sem-echo
 
 sem: sem.c
-	${LD} ${CFLAGS} -o $@ sem.c ${LDFLAGS}
+	${CC} -o $@ sem.c ${CFLAGS} ${LDFLAGS}
 
 sem-echo: sem-echo.c
-	${LD} ${CFLAGS} -o $@ sem-echo.c ${LDFLAGS}
+	${LINK.c} -o $@ sem-echo.c
 
 run: sem
 	cat data.txt | ./sem

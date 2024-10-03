@@ -17,10 +17,11 @@ process_line(char *line)
 		return;
 	}
 
-	line += read_word(op_type_str, line, sizeof(op_type_str));
-	line += read_ts(&ts, line);
+	read_word(op_type_str, &line, sizeof(op_type_str));
+	ts = read_ts(&line);
 
-	char *tss = printtime(ts);
+	char tss[DATE_MAX_LEN];
+	printtime(tss, ts);
 
 	if (ts >= insert_ts) {
 		printf("%s\n", insert);
@@ -28,7 +29,6 @@ process_line(char *line)
 	}
 
 	printf("%s %s%s", op_type_str, tss, line);
-	free(tss);
 }
 
 int
@@ -43,15 +43,13 @@ main(int argc, char *argv[])
 
 	insert_tss = strchr(insert, ' ');
 	CBUG(!insert_tss);
-	read_ts(&insert_ts, insert_tss);
+	insert_ts = read_ts(&insert_tss);
 
 	while ((linelen = getline(&line, &linesize, stdin)) >= 0)
 		process_line(line);
 
 	if (!finished)
 		printf("%s\n", insert);
-
-	free(line);
 
 	return EXIT_SUCCESS;
 }
