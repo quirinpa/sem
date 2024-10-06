@@ -1,0 +1,1 @@
+LDFLAGS := -lit -lqhash -ldb

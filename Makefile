@@ -1,17 +1,18 @@
+include env.mk
 .PHONY: all run clean install
 
-DESTDIR ?= ../../../../
-INSTALL_DEP ?= ${DESTDIR}make_dep.sh
 PREFIX ?= usr
 
 UNAME != uname
 LDFLAGS-Linux := -lbsd
+LDFLAGS-OpenBSD := -L/usr/local/lib
 LDFLAGS += -lit -lqhash -ldb ${LDFLAGS-${UNAME}}
 
 CFLAGS-Alpine := -DALPINE
-CFLAGS += -g ${CFLAGS-${DISTRO}}
+CFLAGS-OpenBSD := -I/usr/local/include
+CFLAGS += -g ${CFLAGS-${DISTRO}} ${CFLAGS-${UNAME}}
 
-all: sem sem-echo
+all: ${exe}
 
 sem: sem.c
 	${CC} -o $@ sem.c ${CFLAGS} ${LDFLAGS}
@@ -23,10 +24,12 @@ run: sem
 	cat data.txt | ./sem
 
 clean:
-	rm sem || true
+	rm sem sem-echo || true
 
 $(DESTDIR)$(PREFIX)/bin/sem: sem
 	install -m 755 sem $@
-	${INSTALL_DEP} ${@:${DESTDIR}%=%}
 
-install: ${DESTDIR}${PREFIX}/bin/sem
+$(DESTDIR)$(PREFIX)/bin/sem-echo: sem-echo
+	install -m 755 sem-echo $@
+
+install: ${exe:%=${DESTDIR}${PREFIX}/bin/%}

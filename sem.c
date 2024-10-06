@@ -640,9 +640,8 @@ line_proc(char *line)
 static inline void
 usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-gdpq]", prog);
+	fprintf(stderr, "Usage: %s [-dpq]", prog);
 	fprintf(stderr, "    Options:\n");
-	fprintf(stderr, "        -g        display graph.\n");
 	fprintf(stderr, "        -d        display debug messages.\n");
 	fprintf(stderr, "        -p        display who's present.\n");
 	fprintf(stderr, "        -q        validate only.\n");
