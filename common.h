@@ -6,10 +6,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <qhash.h>
 #include <it.h>
 
 #define CBUG(c) if (c) { fprintf(stderr, "CBUG! " #c " %s:%s:%d\n", \
 		__FILE__, __FUNCTION__, __LINE__); raise(SIGINT); }
+
+DB_TXN *txnid;
 
 /* read a word */
 static void
