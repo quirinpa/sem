@@ -695,20 +695,20 @@ main(int argc, char *argv[])
 		}
 	}
 
-	op_hd = hash_init();
+	op_hd = hash_init(NULL);
 
-	g_hd = hash_init();
-	ig_hd = hash_init();
-	ge_hd = hash_init();
-	gwho_hd = hash_init();
-	gnpwho_hd = hash_init();
+	g_hd = hash_init(NULL);
+	ig_hd = hash_init(NULL);
+	ge_hd = hash_init(NULL);
+	gwho_hd = hash_init(NULL);
+	gnpwho_hd = hash_init(NULL);
 	hash_assoc(ig_hd, g_hd, ig_assoc);
 
 	p_itd = it_init(NULL);
 	np_itd = it_init(NULL);
 
-	gwho_hd = hash_init();
-	gnpwho_hd = hash_init();
+	gwho_hd = hash_init(NULL);
+	gnpwho_hd = hash_init(NULL);
 
 	for (int i = 0; i < 7; i++)
 		shash_put(op_hd, op_map[i].name,
