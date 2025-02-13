@@ -104,11 +104,11 @@ unsigned pflags = 0;
 
 static inline void
 who_graph_line(unsigned who_does, unsigned flags) {
-	struct hash_cursor c = hash_iter(gwho_hd, NULL, 0);
+	qdb_cur_t c = qdb_iter(gwho_hd, NULL);
 	unsigned ref, ignore;
 
 	if (flags)
-		while (hash_next(&ref, &ignore, &c)) {
+		while (qdb_next(&ref, &ignore, &c)) {
 			if (who_does == ref) {
 				if (flags <= 2 || flags == 5)
 					fputc('*', stderr);
@@ -139,7 +139,7 @@ who_graph_line(unsigned who_does, unsigned flags) {
 			}
 		}
 	else
-		while (hash_next(&ref, &ignore, &c))
+		while (qdb_next(&ref, &ignore, &c))
 			fputc('|', stderr);
 
 	fputc(' ', stderr);
@@ -156,7 +156,7 @@ read_id(char **line)
 	unsigned id;
 	char username[USERNAME_MAX_LEN];
 	read_word(username, line, sizeof(username));
-	CBUG(shash_get(g_hd, &id, username));
+	CBUG(qdb_get(g_hd, &id, username));
 	return id;
 }
 
@@ -168,9 +168,9 @@ read_currency(char **line)
 }
 
 /* create person id to nickname secondary DB items */
-void ig_assoc(void **result, uint32_t *len, void *key, void *value) {
-	*len = sizeof(unsigned);
+int ig_assoc(void **result, void *key, void *value) {
 	* (unsigned **) result = value;
+	return 0;
 }
 
 /******
@@ -192,7 +192,7 @@ ge_get(unsigned id0, unsigned id1)
 		ids[1] = id1;
 	}
 
-	if (hash_get(ge_hd, &ret, ids, sizeof(ids)))
+	if (qdb_get(ge_hd, &ret, ids))
 		return 0;
 
 	return id0 > id1 ? -ret : ret;
@@ -220,7 +220,7 @@ ge_add(unsigned id_from, unsigned id_to, long value)
 	else
 		value = cvalue + value;
 
-	hash_put(ge_hd, ids, sizeof(ids), &value, sizeof(value));
+	qdb_put(ge_hd, ids, &value);
 }
 
 /* show debt between a pair of two people */
@@ -229,8 +229,8 @@ ge_show(unsigned from, unsigned to, long value)
 {
 	char from_name[USERNAME_MAX_LEN];
 	char to_name[USERNAME_MAX_LEN];
-	uhash_pget(ig_hd, from_name, from);
-	uhash_pget(ig_hd, to_name, to);
+	qdb_pget(ig_hd, from_name, &from);
+	qdb_pget(ig_hd, to_name, &to);
 
 	if (value > 0)
 		printf("%s owes %s %.2f€\n", to_name, from_name,
@@ -244,11 +244,11 @@ ge_show(unsigned from, unsigned to, long value)
 static void
 ge_show_all()
 {
-	struct hash_cursor c = hash_iter(ge_hd, NULL, 0);
+	qdb_cur_t c = qdb_iter(ge_hd, NULL);
 	unsigned key[2];
 	unsigned long value;
 
-	while (hash_next(key, &value, &c))
+	while (qdb_next(key, &value, &c))
 		ge_show(key[0], key[1], value);
 }
 
@@ -258,14 +258,14 @@ ge_show_all()
 
 static inline void
 who_present() {
-	struct hash_cursor c = hash_iter(gwho_hd, NULL, 0);
+	qdb_cur_t c = qdb_iter(gwho_hd, NULL);
 	unsigned who, ignore;
 	char name[USERNAME_MAX_LEN];
-	uhash_get(ig_hd, name, who);
+	qdb_get(ig_hd, name, &who);
 
-	while (hash_next(&who, &ignore, &c))
+	while (qdb_next(&who, &ignore, &c))
 		printf("%c %s\n",
-		       uhash_get(gwho_hd, &ignore, who) ? 'P' : 'A',
+		       qdb_get(gwho_hd, &ignore, &who) ? 'P' : 'A',
 		       name);
 }
 
@@ -290,7 +290,7 @@ line_finish(char *line)
 
 static inline void gdebug(time_t ts, unsigned id, char *label) {
 	char user[USERNAME_MAX_LEN];
-	uhash_pget(ig_hd, user, id);
+	qdb_pget(ig_hd, user, &id);
 	char tss[DATE_MAX_LEN];
 	printtime(tss, ts);
 	fprintf(stderr, "%s %s %s", label, tss, user);
@@ -390,7 +390,7 @@ void op_pay(time_t ts, char *line)
 		}
 
 		char name[USERNAME_MAX_LEN];
-		uhash_pget(ig_hd, name, who);
+		qdb_pget(ig_hd, name, &who);
 		if (who != id)
 			ge_add(id, who, cost);
 		ndebug(" %s", name);
@@ -434,7 +434,7 @@ void op_buy(time_t ts, char *line) {
 		dvalue = pay(value, count);
 		if (who != id)
 			ge_add(id, who, pay(value, count));
-		uhash_pget(ig_hd, name, who);
+		qdb_pget(ig_hd, name, &who);
 		ndebug(" %ld %s", dvalue, name);
 	}
 
@@ -460,7 +460,7 @@ void op_transfer(time_t ts, char *line) {
 
 	if (pflags & PF_DEBUG) {
 		char id_from_s[USERNAME_MAX_LEN];
-		uhash_pget(ig_hd, id_from_s, id_from);
+		qdb_pget(ig_hd, id_from_s, &id_from);
 		who_graph_line(id_from, 5);
 		gdebug(ts, id_from, "BUY");
 		fprintf(stderr, " %ld", value);
@@ -486,11 +486,11 @@ void op_stop(time_t ts, char *line) {
 	unsigned id;
 
 	read_word(username, &line, sizeof(username));
-	shash_get(g_hd, &id, username);
+	qdb_get(g_hd, &id, username);
 
-	if (shash_get(g_hd, &id, username)) {
+	if (qdb_get(g_hd, &id, username)) {
 		unsigned id = idm_new(&idm);
-		suhash_put(g_hd, username, id);
+		qdb_put(g_hd, username, &id);
 	}
 
 	if (pflags & PF_DEBUG) {
@@ -501,8 +501,8 @@ void op_stop(time_t ts, char *line) {
 		fputc('\n', stderr);
 	}
 
-	uhash_del(gwho_hd, id);
-	uhash_del(gnpwho_hd, id);
+	qdb_del(gwho_hd, &id, NULL);
+	qdb_del(gnpwho_hd, &id, NULL);
 
 	it_stop(p_itd, ts, id);
 	it_stop(np_itd, ts, id);
@@ -521,9 +521,9 @@ void op_resume(time_t ts, char *line) {
 	unsigned id, ignore;
 
 	id = read_id(&line);
-	CBUG(!uhash_get(gwho_hd, &ignore, id));
-	CBUG(uhash_get(gnpwho_hd, &ignore, id));
-	uhash_put(gwho_hd, id, &id, sizeof(unsigned));
+	CBUG(!qdb_get(gwho_hd, &ignore, &id));
+	CBUG(qdb_get(gnpwho_hd, &ignore, &id));
+	qdb_put(gwho_hd, &id, &id);
 	if (pflags & PF_DEBUG) {
 		who_graph_line(id, 4);
 		fputc('\n', stderr);
@@ -566,7 +566,7 @@ void op_pause(time_t ts, char *line) {
 		who_graph_line(id, 3);
 		fputc('\n', stderr);
 	}
-	uhash_del(gwho_hd, id);
+	qdb_del(gwho_hd, &id, NULL);
 	// TODO assert interval for id at this ts
 	it_stop(p_itd, ts, id);
 }
@@ -585,9 +585,9 @@ void op_start(time_t ts, char *line) {
 
 	read_word(username, &line, sizeof(username));
 	id = idm_new(&idm);
-	suhash_put(g_hd, username, id);
-	uhash_put(gwho_hd, id, &id, sizeof(id));
-	uhash_put(gnpwho_hd, id, &id, sizeof(id));
+	qdb_put(g_hd, username, &id);
+	qdb_put(gwho_hd, &id, &id);
+	qdb_put(gnpwho_hd, &id, &id);
 	if (pflags & PF_DEBUG) {
 		who_graph_line(id, 4);
 		fputc('\n', stderr);
@@ -629,7 +629,7 @@ line_proc(char *line)
 	read_word(op_str, &line, sizeof(op_str));
 	op_proc_t *cb;
 
-	if (shash_get(op_hd, &cb, op_str) < 0)
+	if (qdb_get(op_hd, &cb, op_str) < 0)
 		return;
 
 	ts = read_ts(&line);
@@ -695,24 +695,23 @@ main(int argc, char *argv[])
 		}
 	}
 
-	op_hd = hash_init();
+	qdb_init();
+	qdb_reg("op", sizeof(op_proc_t *));
 
-	g_hd = hash_init();
-	ig_hd = hash_init();
-	ge_hd = hash_init();
-	gwho_hd = hash_init();
-	gnpwho_hd = hash_init();
-	hash_assoc(ig_hd, g_hd, ig_assoc);
+	op_hd = qdb_open(NULL, "s", "op", 0);
+
+	g_hd = qdb_open(NULL, "s", "u", 0);
+	ig_hd = qdb_open(NULL, "u", "s", QH_SEC);
+	ge_hd = qdb_open(NULL, "ul", "ul", 0);
+	gwho_hd = qdb_open(NULL, "u", "u", 0);
+	gnpwho_hd = qdb_open(NULL, "u", "u", 0);
+	qdb_assoc(ig_hd, g_hd, ig_assoc);
 
 	p_itd = it_init(NULL);
 	np_itd = it_init(NULL);
 
-	gwho_hd = hash_init();
-	gnpwho_hd = hash_init();
-
 	for (int i = 0; i < 7; i++)
-		shash_put(op_hd, op_map[i].name,
-				&op_map[i].cb, sizeof(op_map[i].cb));
+		qdb_put(op_hd, op_map[i].name, &op_map[i].cb);
 
 	while ((linelen = getline(&line, &linesize, stdin)) >= 0)
 		line_proc(line);

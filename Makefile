@@ -14,8 +14,12 @@ CFLAGS += -g ${CFLAGS-${DISTRO}} ${CFLAGS-${UNAME}}
 
 npm-lib := @tty-pt/qhash
 node_modules != npm root
-CFLAGS += ${npm-lib:%=-I${node_modules}/%/include}
-LDFLAGS	+= ${npm-lib:%=-L${node_modules}/%} ${npm-lib:%=-Wl,-rpath,%}
+prefix := ${srcdir} \
+	  ${npm-lib:%=${node_modules}/%} \
+	  -I/usr/local/include
+
+CFLAGS += ${prefix:%=-I${node_modules}/%/include}
+LDFLAGS += ${prefix:%=-L${node_modules}/%/lib} ${prefix:%=-Wl,-rpath,%/lib}
 
 all: ${exe}
 
