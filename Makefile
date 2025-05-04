@@ -6,13 +6,13 @@ PREFIX ?= usr
 UNAME != uname
 LDFLAGS-Linux := -lbsd
 LDFLAGS-OpenBSD := -L/usr/local/lib
-LDFLAGS += -lit -lqhash -ldb ${LDFLAGS-${UNAME}}
+LDFLAGS += -lit -lqdb -ldb ${LDFLAGS-${UNAME}}
 
 CFLAGS-Alpine := -DALPINE
 CFLAGS-OpenBSD := -I/usr/local/include
 CFLAGS += -g ${CFLAGS-${DISTRO}} ${CFLAGS-${UNAME}}
 
-npm-lib := @tty-pt/qhash
+npm-lib := @tty-pt/qdb
 node_modules != npm root
 prefix := ${srcdir} \
 	  ${npm-lib:%=${node_modules}/%} \

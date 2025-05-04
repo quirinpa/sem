@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <qhash.h>
+#include <qdb.h>
 #include <it.h>
 
 #define CBUG(c) if (c) { fprintf(stderr, "CBUG! " #c " %s:%s:%d\n", \

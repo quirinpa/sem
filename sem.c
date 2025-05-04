@@ -53,7 +53,7 @@
 #include <bsd/sys/queue.h>
 #endif
 
-#include <qhash.h>
+#include <qdb.h>
 #include <it.h>
 
 #include "common.h"
